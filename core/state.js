@@ -54,6 +54,18 @@ const AppState = {
     { id: 4, name: 'Bireysel Ektima M.', date: 'Aralık 2025', status: 'done', target: 'TR-102, TR-088' }
   ],
 
+  // Görev yönetimi
+  tasks: [
+    { id: 'TSK-001', title: 'Şap Aşısı Uygulaması', desc: 'Belirtilen hayvanlara 2ml kas içi enjeksiyon.', type: 'vaccine', prio: 'High', scope: 'herd', targetTag: null, status: 'pending', createdAt: '2026-03-18' },
+    { id: 'TSK-002', title: 'Sabah Yemlemesi', desc: 'Bölme 1 ve 2 için rasyon tazeleyin.', type: 'feed', prio: 'High', scope: 'herd', targetTag: null, status: 'pending', createdAt: '2026-03-18' }
+  ],
+  taskHistory: [
+    { id: 'TSK-H01', title: 'Ağıl Dezenfeksiyonu', desc: 'Tüm bölmelerin ilaçlı yıkama işlemi.', type: 'cleaning', prio: 'Normal', scope: 'herd', targetTag: null, status: 'completed', createdAt: '2026-03-15', completedAt: '2026-03-15' }
+  ],
+
+  // Kullanıcı rolü
+  userRole: 'owner',
+
   // Sürüdeki tüm hayvanlar (V2 Multi-Animal)
   animals: []
 };

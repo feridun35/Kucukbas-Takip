@@ -4,13 +4,14 @@
 
 import { animalData, breedingMockRam } from '../data/mock-data.js';
 import { getState, getAnimalById, setState } from '../core/state.js';
-import { showAlert, showPrompt } from '../core/modal.js';
+import { showAlert, showPrompt, showConfirm } from '../core/modal.js';
 import { navigateTo } from '../core/router.js';
 import { checkInbreeding, calculateCompatibility, calculateBirthDate } from '../core/breedingManager.js';
 import { calculateAnimalROI } from '../core/financeEngine.js';
+import { getTasksForUser, getTaskHistory, addTask, completeTask, TASK_TYPES } from '../core/workforceManager.js';
 
 let _container = null;
-let _activeTab = 'info'; // 'info', 'passport', 'breeding', 'health', 'finance'
+let _activeTab = 'info'; // 'info', 'passport', 'breeding', 'health', 'finance', 'tasks'
 let _breedingViewMode = 'mating';
 
 export function render() {
@@ -67,6 +68,9 @@ export function render() {
       <button class="tab-btn ${_activeTab === 'finance' ? 'active' : ''}" data-tab="finance" style="flex:none; padding:12px 16px; background:none; border:none; color:${_activeTab==='finance'?'var(--accent-amber)':'var(--text-secondary)'}; border-bottom:${_activeTab==='finance'?'2px solid var(--accent-amber)':'2px solid transparent'}; font-weight:600; cursor:pointer; white-space:nowrap; transition:0.2s;">
         Finans
       </button>
+      <button class="tab-btn ${_activeTab === 'tasks' ? 'active' : ''}" data-tab="tasks" style="flex:none; padding:12px 16px; background:none; border:none; color:${_activeTab==='tasks'?'var(--accent-cyan)':'var(--text-secondary)'}; border-bottom:${_activeTab==='tasks'?'2px solid var(--accent-cyan)':'2px solid transparent'}; font-weight:600; cursor:pointer; white-space:nowrap; transition:0.2s;">
+        Görev
+      </button>
       <button class="tab-btn ${_activeTab === 'passport' ? 'active' : ''}" data-tab="passport" style="flex:none; padding:12px 16px; background:none; border:none; color:${_activeTab==='passport'?'var(--accent-purple)':'var(--text-secondary)'}; border-bottom:${_activeTab==='passport'?'2px solid var(--accent-purple)':'2px solid transparent'}; font-weight:600; cursor:pointer; white-space:nowrap; transition:0.2s;">
         Pasaport
       </button>
@@ -79,6 +83,7 @@ export function render() {
   else if (_activeTab === 'breeding') tabContentHtml = _renderBreedingTab(currentAnimal, state.focusMode);
   else if (_activeTab === 'health') tabContentHtml = _renderHealthTab(currentAnimal);
   else if (_activeTab === 'finance') tabContentHtml = _renderFinanceTab(currentAnimal);
+  else if (_activeTab === 'tasks') tabContentHtml = _renderTasksTab(currentAnimal);
 
   _container.innerHTML = `
     <div style="margin-bottom: var(--space-md);">
@@ -123,6 +128,7 @@ export function init() {
   if (_activeTab === 'breeding') _initBreedingTab();
   if (_activeTab === 'health') _initHealthTab();
   if (_activeTab === 'finance') _initFinanceTab();
+  if (_activeTab === 'tasks') _initTasksTab();
 }
 
 // ═══════════════════════════════════════
@@ -481,15 +487,8 @@ function _initHealthTab() {
           target: tagToUse
         };
         setState({ vaccines: [newV, ...(state.vaccines || [])] });
-
-        // Re-render
-        const parent = _container.parentNode;
-        const scrollPos = window.scrollY;
-        parent.innerHTML = '';
-        parent.appendChild(render());
-        init();
-        window.scrollTo(0, scrollPos);
         showAlert('Başarılı', `${vName} aşısı ${tagToUse} için kaydedildi.`, '✅');
+        _rerender();
       }
     });
   }
@@ -586,6 +585,133 @@ function _renderFinanceTab(animal) {
 function _initFinanceTab() {
   const btnSell = _container.querySelector('#btn-sell-ind');
   if (btnSell) btnSell.addEventListener('click', () => showAlert('Hızlı Satış', '[SIM] Bu hayvanı satıldığında ROI kaydı arşivlenir.', '💰'));
+}
+
+// ═══════════════════════════════════════
+// Tab: TASKS (Bireysel Görevler)
+// ═══════════════════════════════════════
+function _renderTasksTab(animal) {
+  const activeTasks = getTasksForUser('owner', 'individual', animal.tagID);
+  const history = getTaskHistory('individual', animal.tagID);
+
+  const activeHtml = activeTasks.length === 0 
+    ? '<p style="font-size:0.85rem; color:var(--text-muted); text-align:center; padding:10px;">Bekleyen bireysel görev yok.</p>'
+    : activeTasks.map(t => {
+        const typeInfo = TASK_TYPES.find(tt => tt.value === t.type) || TASK_TYPES[5];
+        return `
+          <div class="task-card" style="border-left:4px solid ${typeInfo.color}; margin-bottom:8px;">
+            <div class="t-main">
+              <div class="t-title"><span style="font-size:0.85rem;">${typeInfo.label.split(' ')[0]}</span> ${t.title}
+                ${t.prio === 'High' ? '<span style="font-size:0.65rem; background:rgba(239,68,68,0.2); color:var(--danger-red); padding:2px 6px; border-radius:6px; margin-left:6px;">ACİL</span>' : ''}
+              </div>
+              <div class="t-desc">${t.desc || ''}</div>
+              <div style="font-size:0.65rem; color:var(--text-muted); margin-top:4px;">Oluşturulma: ${t.createdAt}</div>
+            </div>
+            <div class="t-action" data-task-id="${t.id}">
+              <button class="btn-complete-ind-task" style="padding:8px 14px; border-radius:12px; border:none; background:var(--accent-green); color:#fff; font-weight:600; font-size:0.75rem; cursor:pointer; box-shadow:0 2px 8px rgba(34,197,94,0.3);">✅ Tamamla</button>
+            </div>
+          </div>
+        `;
+      }).join('');
+
+  const historyHtml = history.length === 0
+    ? '<p style="font-size:0.85rem; color:var(--text-muted); text-align:center; padding:10px;">Henüz tamamlanan bireysel görev yok.</p>'
+    : history.map(t => {
+        const typeInfo = TASK_TYPES.find(tt => tt.value === t.type) || TASK_TYPES[5];
+        return `
+          <div class="task-card completed-task" style="border-left:4px solid #10b981; opacity:0.7; margin-bottom:8px;">
+            <div class="t-main">
+              <div class="t-title" style="text-decoration:line-through; color:var(--text-muted);">
+                <span style="font-size:0.8rem;">${typeInfo.label.split(' ')[0]}</span> ${t.title}
+              </div>
+              <div style="font-size:0.7rem; color:var(--text-muted); margin-top:4px;">Tamamlandı: ${t.completedAt || '-'}</div>
+            </div>
+            <div class="t-status" style="color:#10b981; font-weight:700; font-size:0.7rem;">✔ Bitti</div>
+          </div>
+        `;
+      }).join('');
+
+  return `
+    <div class="section-title"><span class="dot" style="background:var(--accent-cyan)"></span>Aktif Bireysel Görevler</div>
+    <div class="glass-card" style="margin-bottom:var(--space-lg); padding:var(--space-sm);">
+      ${activeHtml}
+    </div>
+
+    <div class="section-title"><span class="dot" style="background:#10b981"></span>Tamamlanan Görevler</div>
+    <div class="glass-card" style="margin-bottom:var(--space-xl); padding:var(--space-sm);">
+      ${historyHtml}
+    </div>
+
+    <div style="display:flex; flex-direction:column; gap:12px; position:relative !important; width:calc(100% - var(--space-lg)*2); margin:0 auto var(--space-xl) auto;">
+      <button class="huge-btn btn-primary" id="btn-add-ind-task" style="width:100%; border-radius:24px; padding:16px; background:var(--accent-cyan); box-shadow:0 4px 16px var(--accent-cyan-glow);">
+        <span class="btn-icon">➕</span> Bireysel Görev Ekle
+      </button>
+    </div>
+  `;
+}
+
+function _initTasksTab() {
+  // Bireysel görev ekleme
+  const btnAdd = _container.querySelector('#btn-add-ind-task');
+  if (btnAdd) {
+    btnAdd.addEventListener('click', async () => {
+      const state = getState();
+      const activeId = state.activeAnimalId || (state.animals && state.animals.length > 0 ? state.animals[0].id : null);
+      const rawAnimal = getAnimalById(activeId) || {};
+      const tagToUse = rawAnimal.tagID || 'TR-102';
+
+      // Tür seçimi
+      const typeOptions = TASK_TYPES.map(t => t.label).join('\n');
+      const typeStr = await showPrompt('Görev Türü', `Eklenecek görevin türünü yazınız:\n\n${typeOptions}\n\nÖrn: Aşı`, 'text', '📋');
+      if (!typeStr) return;
+      const matchedType = TASK_TYPES.find(t => t.label.toLowerCase().includes(typeStr.toLowerCase())) || TASK_TYPES[5];
+
+      const title = await showPrompt('Görev Başlığı', 'Görev başlığını giriniz:', 'text', matchedType.label.split(' ')[0]);
+      if (!title) return;
+
+      const desc = await showPrompt('Açıklama', 'Kısa açıklama (opsiyonel):', 'text', '📝') || '';
+
+      const prioStr = await showPrompt('Öncelik', 'Öncelik: Yüksek veya Normal', 'text', '⚡');
+      const prio = (prioStr && prioStr.toLowerCase().includes('yüksek')) ? 'High' : 'Normal';
+
+      addTask({
+        title,
+        desc,
+        type: matchedType.value,
+        prio,
+        scope: 'individual',
+        targetTag: tagToUse
+      });
+
+      showAlert('Görev Eklendi', `"${title}" görevi ${tagToUse} için eklendi.`, '✅');
+      _rerender();
+    });
+  }
+
+  // Görev tamamlama butonları
+  const completeBtns = _container.querySelectorAll('.btn-complete-ind-task');
+  completeBtns.forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      const taskId = e.target.closest('[data-task-id]').getAttribute('data-task-id');
+      const confirmed = await showConfirm('Görevi Tamamla', 'Bu görevi tamamlandı olarak işaretlemek istiyor musunuz?', '✅');
+      if (confirmed) {
+        const result = completeTask(taskId);
+        if (result.success) {
+          showAlert('Başarılı', result.message, '✅');
+          _rerender();
+        }
+      }
+    });
+  });
+}
+
+function _rerender() {
+  const parent = _container.parentNode;
+  const scrollPos = window.scrollY;
+  parent.innerHTML = '';
+  parent.appendChild(render());
+  init();
+  window.scrollTo(0, scrollPos);
 }
 
 // ── Helpers ──

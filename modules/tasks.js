@@ -1,28 +1,36 @@
 /**
  * ShepherdAI — İş Gücü ve Görev Yönetimi Modülü UI
+ * State-driven: Görevler state.tasks / state.taskHistory üzerinden yönetilir.
  */
 
-import { getState } from '../core/state.js';
-import { getTasksForUser, verifyTaskWithRFID, processSensorForEmergency } from '../core/workforceManager.js';
-import { showConfirm, showAlert } from '../core/modal.js';
+import { getState, setState } from '../core/state.js';
+import { getTasksForUser, getTaskHistory, addTask, completeTask, TASK_TYPES, processSensorForEmergency } from '../core/workforceManager.js';
+import { showConfirm, showAlert, showPrompt } from '../core/modal.js';
 
 let _container = null;
-let _currentRole = 'owner'; // 'owner' veya 'worker'
+let _viewMode = 'active'; // 'active' | 'history'
 
 export function render() {
   _container = document.createElement('div');
   _container.className = 'page-enter tasks-page';
   _container.style.paddingBottom = '180px'; 
   
-  const tasks = getTasksForUser(_currentRole);
+  const state = getState();
+  const role = state.userRole || 'owner';
+  const tasks = getTasksForUser(role, 'herd');
+  const history = getTaskHistory('herd');
   const pendingCount = tasks.filter(t => t.status === 'pending').length;
 
   _container.innerHTML = `
-    ${_renderHeader(pendingCount)}
-    ${_currentRole === 'owner' ? _renderOwnerDashboard(tasks) : _renderWorkerTodoList(tasks)}
-    ${_renderHugeActionButtons()}
+    ${_renderHeader(role, pendingCount, history.length)}
+    ${_renderViewToggle()}
+    ${_viewMode === 'active' 
+      ? (role === 'owner' ? _renderOwnerDashboard(tasks) : _renderWorkerTodoList(tasks))
+      : _renderHistoryList(history)
+    }
+    ${_renderHugeActionButtons(role)}
     
-    <!-- Emergency Modal (Gizli olarak DOM'a eklenir) -->
+    <!-- Emergency Modal -->
     <div id="emergency-overlay" class="emergency-overlay" style="display:none;">
       <div class="c-modal-box" style="border-color:var(--danger-red); box-shadow:0 10px 40px rgba(239,68,68,0.4); margin:var(--space-md);">
         <div class="c-modal-icon">⚠️</div>
@@ -41,58 +49,48 @@ export function render() {
 export function init() {
   if (!_container) return;
 
-  const btnToggleRole = _container.querySelector('#btn-toggle-role');
-  if (btnToggleRole) {
-    btnToggleRole.addEventListener('click', () => {
-      _currentRole = _currentRole === 'owner' ? 'worker' : 'owner';
-      // Yeniden render
-      const parent = _container.parentNode;
-      const scrollPos = window.scrollY;
-      parent.innerHTML = '';
-      parent.appendChild(render());
-      init();
-      window.scrollTo(0, scrollPos);
-    });
-  }
+  // Aktif / Geçmiş geçişi
+  const btnActive = _container.querySelector('#btn-view-active');
+  const btnHistory = _container.querySelector('#btn-view-history');
+  if (btnActive) btnActive.addEventListener('click', () => { _viewMode = 'active'; _rerender(); });
+  if (btnHistory) btnHistory.addEventListener('click', () => { _viewMode = 'history'; _rerender(); });
 
-  // Worker task buttons
-  const rfidButtons = _container.querySelectorAll('.btn-simulate-rfid');
-  rfidButtons.forEach(btn => {
+  // Görev Tamamlama butonları
+  const completeBtns = _container.querySelectorAll('.btn-complete-task');
+  completeBtns.forEach(btn => {
     btn.addEventListener('click', async (e) => {
-      const taskID = e.target.getAttribute('data-task-id');
-      const targetRFID = e.target.getAttribute('data-rfid');
-      
-      // Simulate scanning the CORRECT rfid vs INCORRECT rfid
-      const useCorrect = await showConfirm(
-        'RFID Simülasyonu',
-        "Doğru RFID'yi mi okutalım, yoksa yanlış bir hayvanı mı?",
-        '📲'
-      );
-      
-      const scanned = useCorrect ? targetRFID : "FAKE-RFID-999";
-      const result = verifyTaskWithRFID(taskID, scanned);
-      
-      if (result.success) {
-        showAlert('Başarılı', result.message, '✅');
-        e.target.parentNode.parentNode.style.opacity = '0.5';
-        e.target.innerText = 'Tamamlandı';
-        e.target.disabled = true;
-      } else {
-        showAlert('Hata', result.message, '❌');
+      const taskId = e.target.closest('[data-task-id]').getAttribute('data-task-id');
+      const confirmed = await showConfirm('Görevi Tamamla', 'Bu görevi tamamlandı olarak işaretlemek istiyor musunuz?', '✅');
+      if (confirmed) {
+        const result = completeTask(taskId);
+        if (result.success) {
+          showAlert('Başarılı', result.message, '✅');
+          _rerender();
+        } else {
+          showAlert('Hata', result.message, '❌');
+        }
       }
     });
   });
 
-  // Emergency Trigger Button (Test amaçlı)
-  const btnTriggerGorev = _container.querySelector('#btn-start-task');
-  if (btnTriggerGorev) {
-    btnTriggerGorev.addEventListener('click', () => {
-        // Amonyak 80 simülasyonu
-        const emg = processSensorForEmergency('ammonia', 80);
-        _triggerEmergencyUI(emg);
+  // Görev Ekle butonu
+  const btnAddTask = _container.querySelector('#btn-add-herd-task');
+  if (btnAddTask) {
+    btnAddTask.addEventListener('click', async () => {
+      await _showAddTaskFlow('herd', null);
     });
   }
 
+  // Acil Durum Test
+  const btnEmergency = _container.querySelector('#btn-emergency-test');
+  if (btnEmergency) {
+    btnEmergency.addEventListener('click', () => {
+      const emg = processSensorForEmergency('ammonia', 80);
+      _triggerEmergencyUI(emg);
+    });
+  }
+
+  // Emergency dismiss
   const btnDismiss = _container.querySelector('#btn-dismiss-emergency');
   if (btnDismiss) {
     btnDismiss.addEventListener('click', () => {
@@ -103,33 +101,61 @@ export function init() {
   }
 }
 
-function _triggerEmergencyUI(emgData) {
-  if (!emgData || !_container) return;
-  
-  const overlay = _container.querySelector('#emergency-overlay');
-  if (overlay) {
-    overlay.querySelector('#e-title').innerText = emgData.title;
-    overlay.querySelector('#e-message').innerText = emgData.message;
-    overlay.style.display = 'flex';
-  }
-  
-  // Arka plana animasyon class'ı ekle
-  _container.classList.add('emergency-active');
+// ═══════════════════════════════════════
+// Görev Ekleme Akışı (Sürü & Bireysel)
+// ═══════════════════════════════════════
+async function _showAddTaskFlow(scope, animalTag) {
+  // 1. Tür seçimi
+  const typeOptions = TASK_TYPES.map(t => t.label).join('\n');
+  const typeStr = await showPrompt(
+    'Görev Türü',
+    `Eklenecek görevin türünü seçiniz:\n\n${typeOptions}\n\nYukarıdakilerden birini yazınız (örn: Aşı):`,
+    'text', '📋'
+  );
+  if (!typeStr) return;
+
+  const matchedType = TASK_TYPES.find(t => t.label.toLowerCase().includes(typeStr.toLowerCase())) || TASK_TYPES[5];
+
+  // 2. Görev başlığı
+  const title = await showPrompt('Görev Başlığı', 'Görev başlığını giriniz:', 'text', matchedType.label.split(' ')[0]);
+  if (!title) return;
+
+  // 3. Açıklama
+  const desc = await showPrompt('Açıklama', 'Kısa açıklama (opsiyonel):', 'text', '📝') || '';
+
+  // 4. Öncelik
+  const prioStr = await showPrompt('Öncelik', 'Öncelik seviyesi: Yüksek veya Normal', 'text', '⚡');
+  const prio = (prioStr && prioStr.toLowerCase().includes('yüksek')) ? 'High' : 'Normal';
+
+  // Ekle
+  const newTask = addTask({
+    title,
+    desc,
+    type: matchedType.value,
+    prio,
+    scope,
+    targetTag: animalTag
+  });
+
+  showAlert('Görev Eklendi', `"${newTask.title}" başarıyla ${scope === 'herd' ? 'sürü' : animalTag} görevi olarak eklendi.`, '✅');
+  _viewMode = 'active';
+  _rerender();
 }
+
+// Export for animal-profile to use
+export { _showAddTaskFlow as showAddTaskFlow };
 
 // ═══════════════════════════════════════
 // Render Helpers
 // ═══════════════════════════════════════
 
-function _renderHeader(pendingCount) {
+function _renderHeader(role, pendingCount, historyCount) {
+  const isOwner = role === 'owner';
   return `
     <div class="tasks-header">
       <div class="tasks-h-left">
         <h2>Görev ve Lojistik Panosu</h2>
-        <p>Mevcut Rol: <strong style="color:var(--accent-blue)">${_currentRole.toUpperCase()}</strong></p>
-      </div>
-      <div class="tasks-h-right">
-        <button id="btn-toggle-role" class="btn-outline-blue">Görünüm Değiştir</button>
+        <p>Aktif Rol: <strong style="color:${isOwner ? 'var(--accent-blue)' : 'var(--accent-green)'}">${isOwner ? '👨‍🌾 SAHİP' : '🧑‍🔧 ÇALIŞAN'}</strong></p>
       </div>
     </div>
     
@@ -139,33 +165,38 @@ function _renderHeader(pendingCount) {
         <span class="t-lbl">Açık Görev</span>
       </div>
       <div class="t-summary-item">
-        <span class="t-num text-emerald">2</span>
+        <span class="t-num text-emerald">${historyCount}</span>
         <span class="t-lbl">Tamamlanan</span>
       </div>
     </div>
   `;
 }
 
-function _renderOwnerDashboard(tasks) {
+function _renderViewToggle() {
   return `
-    <div class="section-title"><span class="dot" style="background:var(--accent-orange)"></span>Komuta Paneli (Performans)</div>
-    
-    <div class="glass-card owner-stats-card">
-      <div class="o-stat">
-        <span class="o-val">Veli usta</span>
-        <span class="o-lbl">Aktif Çoban</span>
-      </div>
-      <div class="o-stat">
-        <span class="o-val">%85</span>
-        <span class="o-lbl">Görev Verimi</span>
-      </div>
-      <div class="o-stat">
-        <span class="o-val text-red">1</span>
-        <span class="o-lbl">Geciken İş</span>
-      </div>
+    <div style="display:flex; gap:8px; margin:var(--space-md) 0;">
+      <button id="btn-view-active" style="flex:1; padding:10px; border-radius:12px; border:none; font-weight:600; cursor:pointer; transition:0.2s; background:${_viewMode === 'active' ? 'var(--accent-blue)' : 'var(--glass-bg)'}; color:${_viewMode === 'active' ? '#fff' : 'var(--text-muted)'};">
+        📋 Aktif Görevler
+      </button>
+      <button id="btn-view-history" style="flex:1; padding:10px; border-radius:12px; border:none; font-weight:600; cursor:pointer; transition:0.2s; background:${_viewMode === 'history' ? 'var(--accent-purple)' : 'var(--glass-bg)'}; color:${_viewMode === 'history' ? '#fff' : 'var(--text-muted)'};">
+        📜 Geçmiş
+      </button>
     </div>
+  `;
+}
 
-    <div class="section-title" style="margin-top:var(--space-lg)"><span class="dot" style="background:var(--accent-blue)"></span>Bugünün Görevleri</div>
+function _renderOwnerDashboard(tasks) {
+  if (tasks.length === 0) {
+    return `
+      <div class="glass-card" style="text-align:center; padding:var(--space-xl); color:var(--text-muted);">
+        <p style="font-size:2rem; margin-bottom:8px;">🎉</p>
+        <p>Tüm sürü görevleri tamamlandı!</p>
+      </div>
+    `;
+  }
+
+  return `
+    <div class="section-title"><span class="dot" style="background:var(--accent-blue)"></span>Sürü Görevleri</div>
     <div class="task-list">
       ${tasks.map(t => _renderTaskItem(t, 'owner')).join('')}
     </div>
@@ -173,54 +204,120 @@ function _renderOwnerDashboard(tasks) {
 }
 
 function _renderWorkerTodoList(tasks) {
+  if (tasks.length === 0) {
+    return `
+      <div class="glass-card" style="text-align:center; padding:var(--space-xl); color:var(--text-muted);">
+        <p style="font-size:2rem; margin-bottom:8px;">✅</p>
+        <p>Bekleyen görev yok. İyi iş!</p>
+      </div>
+    `;
+  }
+
   return `
-    <div class="section-title"><span class="dot" style="background:var(--accent-blue)"></span>Ağıl İçi Yapılacaklar (To-Do)</div>
+    <div class="section-title"><span class="dot" style="background:var(--accent-green)"></span>Yapılacaklar</div>
     <div class="task-list worker-list">
-      <p style="font-size:0.75rem; color:var(--text-secondary); margin-bottom:12px;">Görevleri kapatmak için ilgili hayvanın RFID küpesini okutun.</p>
       ${tasks.map(t => _renderTaskItem(t, 'worker')).join('')}
     </div>
   `;
 }
 
-function _renderTaskItem(task, role) {
-  const isCompleted = task.status === 'completed';
-  const statusColor = isCompleted ? '#10b981' : (task.prio === 'High' ? '#ef4444' : '#f97316');
-  
-  // Eğer çoban modundaysak ve görev bitmediyse RFID butonu göster
-  let actionArea = '';
-  if (role === 'worker' && !isCompleted && task.targetAnimalRFID) {
-    actionArea = `
-      <div class="t-action">
-        <button class="btn-simulate-rfid" data-task-id="${task.id}" data-rfid="${task.targetAnimalRFID}">
-          📲 RFID Okut & Tamamla
-        </button>
+function _renderHistoryList(history) {
+  if (history.length === 0) {
+    return `
+      <div class="glass-card" style="text-align:center; padding:var(--space-xl); color:var(--text-muted);">
+        <p style="font-size:2rem; margin-bottom:8px;">📭</p>
+        <p>Henüz tamamlanan görev yok.</p>
       </div>
     `;
-  } else if (role === 'owner') {
-     actionArea = `<div class="t-status" style="color:${statusColor}; font-weight:700; font-size:0.7rem;">${isCompleted ? 'Tamanlandı' : 'Bekliyor'}</div>`;
   }
 
   return `
-    <div class="task-card ${isCompleted ? 'completed-task' : ''}" style="border-left: 4px solid ${statusColor}">
+    <div class="section-title"><span class="dot" style="background:var(--accent-purple)"></span>Tamamlanan Görevler</div>
+    <div class="task-list">
+      ${history.map(t => {
+        const typeInfo = TASK_TYPES.find(tt => tt.value === t.type) || TASK_TYPES[5];
+        return `
+          <div class="task-card completed-task" style="border-left: 4px solid #10b981; opacity:0.8;">
+            <div class="t-main">
+              <div class="t-title" style="text-decoration:line-through; color:var(--text-muted);">
+                <span style="font-size:0.8rem;">${typeInfo.label.split(' ')[0]}</span> ${t.title}
+              </div>
+              <div class="t-desc">${t.desc || ''}</div>
+              <div style="font-size:0.7rem; color:var(--text-muted); margin-top:4px;">
+                ${t.targetTag ? `Hedef: <strong>${t.targetTag}</strong> · ` : ''}Tamamlandı: ${t.completedAt || '-'}
+              </div>
+            </div>
+            <div class="t-status" style="color:#10b981; font-weight:700; font-size:0.7rem;">✔ Bitti</div>
+          </div>
+        `;
+      }).join('')}
+    </div>
+  `;
+}
+
+function _renderTaskItem(task, role) {
+  const typeInfo = TASK_TYPES.find(t => t.value === task.type) || TASK_TYPES[5];
+  const isCompleted = task.status === 'completed';
+  const statusColor = isCompleted ? '#10b981' : (task.prio === 'High' ? '#ef4444' : '#f97316');
+  
+  let actionArea = '';
+  if (!isCompleted) {
+    actionArea = `
+      <div class="t-action" data-task-id="${task.id}">
+        <button class="btn-complete-task" style="padding:8px 14px; border-radius:12px; border:none; background:var(--accent-green); color:#fff; font-weight:600; font-size:0.75rem; cursor:pointer; box-shadow:0 2px 8px rgba(34,197,94,0.3);">
+          ✅ Tamamla
+        </button>
+      </div>
+    `;
+  } else {
+    actionArea = `<div class="t-status" style="color:${statusColor}; font-weight:700; font-size:0.7rem;">Tamamlandı</div>`;
+  }
+
+  return `
+    <div class="task-card ${isCompleted ? 'completed-task' : ''}" style="border-left: 4px solid ${typeInfo.color}">
       <div class="t-main">
-        <div class="t-title">${task.title}</div>
+        <div class="t-title">
+          <span style="font-size:0.85rem;">${typeInfo.label.split(' ')[0]}</span> ${task.title}
+          ${task.prio === 'High' ? '<span style="font-size:0.65rem; background:rgba(239,68,68,0.2); color:var(--danger-red); padding:2px 6px; border-radius:6px; margin-left:6px;">ACIL</span>' : ''}
+        </div>
         <div class="t-desc">${task.desc}</div>
-        ${task.targetTag ? `<div class="t-target">Hedef Hayvan: <span class="badge" style="background:rgba(255,255,255,0.1)">${task.targetTag}</span></div>` : ''}
+        ${task.targetTag ? `<div class="t-target">Hedef: <span class="badge" style="background:rgba(255,255,255,0.1)">${task.targetTag}</span></div>` : ''}
+        <div style="font-size:0.65rem; color:var(--text-muted); margin-top:4px;">Oluşturulma: ${task.createdAt}</div>
       </div>
       ${actionArea}
     </div>
   `;
 }
 
-function _renderHugeActionButtons() {
+function _renderHugeActionButtons(role) {
   return `
     <div class="tasks-fixed-bottom">
-      <button class="huge-btn btn-primary" id="btn-start-task" style="background:var(--accent-blue); box-shadow:0 4px 16px rgba(59, 130, 246, 0.4);">
-        <span class="btn-icon">🚀</span> Acil Durum Test
+      <button class="huge-btn btn-primary" id="btn-add-herd-task" style="background:var(--accent-blue); box-shadow:0 4px 16px rgba(59, 130, 246, 0.4);">
+        <span class="btn-icon">➕</span> Sürü Görevi Ekle
       </button>
-      <button class="huge-btn btn-secondary-deep" id="btn-photo" style="background:rgba(255,255,255,0.05); color:var(--text-primary); border:1px solid rgba(255,255,255,0.1);">
-        <span class="btn-icon">📸</span> Fotoğraf
+      <button class="huge-btn btn-secondary-deep" id="btn-emergency-test" style="background:rgba(239,68,68,0.1); color:var(--danger-red); border:1px solid rgba(239,68,68,0.3);">
+        <span class="btn-icon">⚠️</span> Acil Durum Test
       </button>
     </div>
   `;
+}
+
+function _triggerEmergencyUI(emgData) {
+  if (!emgData || !_container) return;
+  const overlay = _container.querySelector('#emergency-overlay');
+  if (overlay) {
+    overlay.querySelector('#e-title').innerText = emgData.title;
+    overlay.querySelector('#e-message').innerText = emgData.message;
+    overlay.style.display = 'flex';
+  }
+  _container.classList.add('emergency-active');
+}
+
+function _rerender() {
+  const parent = _container.parentNode;
+  const scrollPos = window.scrollY;
+  parent.innerHTML = '';
+  parent.appendChild(render());
+  init();
+  window.scrollTo(0, scrollPos);
 }
