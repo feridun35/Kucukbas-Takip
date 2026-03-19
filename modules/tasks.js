@@ -5,7 +5,7 @@
 
 import { getState, setState } from '../core/state.js';
 import { getTasksForUser, getTaskHistory, addTask, completeTask, TASK_TYPES, processSensorForEmergency } from '../core/workforceManager.js';
-import { showConfirm, showAlert, showPrompt } from '../core/modal.js';
+import { showConfirm, showAlert, showPrompt, showSelect } from '../core/modal.js';
 
 let _container = null;
 let _viewMode = 'active'; // 'active' | 'history'
@@ -105,27 +105,28 @@ export function init() {
 // Görev Ekleme Akışı (Sürü & Bireysel)
 // ═══════════════════════════════════════
 async function _showAddTaskFlow(scope, animalTag) {
-  // 1. Tür seçimi
-  const typeOptions = TASK_TYPES.map(t => t.label).join('\n');
-  const typeStr = await showPrompt(
-    'Görev Türü',
-    `Eklenecek görevin türünü seçiniz:\n\n${typeOptions}\n\nYukarıdakilerden birini yazınız (örn: Aşı):`,
-    'text', '📋'
+  // 1. Tür seçimi (tıklanabilir butonlar)
+  const typeOptions = TASK_TYPES.map(t => ({ value: t.value, label: t.label, color: t.color, icon: t.label.split(' ')[0] }));
+  const selectedType = await showSelect(
+    `Görev Türü Seçin ${scope === 'herd' ? '(Sürü Görevi)' : '(Bireysel)'}`,
+    typeOptions, '📋'
   );
-  if (!typeStr) return;
-
-  const matchedType = TASK_TYPES.find(t => t.label.toLowerCase().includes(typeStr.toLowerCase())) || TASK_TYPES[5];
+  if (!selectedType) return;
+  const matchedType = TASK_TYPES.find(t => t.value === selectedType.value) || TASK_TYPES[5];
 
   // 2. Görev başlığı
-  const title = await showPrompt('Görev Başlığı', 'Görev başlığını giriniz:', 'text', matchedType.label.split(' ')[0]);
+  const title = await showPrompt('Görev Başlığı', `${matchedType.label} görevi için başlık giriniz:`, 'text', matchedType.label.split(' ')[0]);
   if (!title) return;
 
   // 3. Açıklama
   const desc = await showPrompt('Açıklama', 'Kısa açıklama (opsiyonel):', 'text', '📝') || '';
 
-  // 4. Öncelik
-  const prioStr = await showPrompt('Öncelik', 'Öncelik seviyesi: Yüksek veya Normal', 'text', '⚡');
-  const prio = (prioStr && prioStr.toLowerCase().includes('yüksek')) ? 'High' : 'Normal';
+  // 4. Öncelik (tıklanabilir)
+  const prioOption = await showSelect('Öncelik Seçin', [
+    { value: 'High', label: 'Yüksek Öncelik', color: '#ef4444', icon: '🔴' },
+    { value: 'Normal', label: 'Normal Öncelik', color: '#3b82f6', icon: '🟢' }
+  ], '⚡');
+  const prio = prioOption ? prioOption.value : 'Normal';
 
   // Ekle
   const newTask = addTask({
@@ -137,7 +138,7 @@ async function _showAddTaskFlow(scope, animalTag) {
     targetTag: animalTag
   });
 
-  showAlert('Görev Eklendi', `"${newTask.title}" başarıyla ${scope === 'herd' ? 'sürü' : animalTag} görevi olarak eklendi.`, '✅');
+  showAlert('Görev Eklendi', `"${newTask.title}" başarıyla ${scope === 'herd' ? '🐑 Sürü' : animalTag} görevi olarak eklendi.`, '✅');
   _viewMode = 'active';
   _rerender();
 }

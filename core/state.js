@@ -66,6 +66,24 @@ const AppState = {
   // Kullanıcı rolü
   userRole: 'owner',
 
+  // Yem envanter
+  feedInventory: [
+    { id: 'yonca', name: 'Yonca', icon: '🌿', amount: 1200, unit: 'kg' },
+    { id: 'fi', name: 'Fiğ', icon: '🌱', amount: 800, unit: 'kg' },
+    { id: 'bugday', name: 'Buğday', icon: '🌾', amount: 600, unit: 'kg' },
+    { id: 'arpa', name: 'Arpa', icon: '🌾', amount: 450, unit: 'kg' },
+    { id: 'misir', name: 'Mısır Silajı', icon: '🌽', amount: 2000, unit: 'kg' },
+    { id: 'saman', name: 'Saman', icon: '🪹', amount: 1500, unit: 'kg' },
+    { id: 'hazir', name: 'Hazır Yem (Besi)', icon: '📦', amount: 300, unit: 'kg' },
+    { id: 'kuzu', name: 'Kuzu Gelişim Yemi', icon: '🐣', amount: 150, unit: 'kg' },
+    { id: 'mineral', name: 'Mineral/Vitamin', icon: '💊', amount: 25, unit: 'kg' },
+    { id: 'yalama', name: 'Tuz Yalama Taşı', icon: '🪨', amount: 10, unit: 'adet' }
+  ],
+  feedHistory: [
+    { id: 'FH-001', feedId: 'arpa', feedName: 'Arpa', amount: 200, type: 'entry', date: '15 Mar 2026', note: '2 çuval' },
+    { id: 'FH-002', feedId: 'saman', feedName: 'Saman', amount: 500, type: 'entry', date: '10 Mar 2026', note: 'Bal topları' }
+  ],
+
   // Sürüdeki tüm hayvanlar (V2 Multi-Animal)
   animals: []
 };

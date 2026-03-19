@@ -4,7 +4,7 @@
 
 import { animalData, breedingMockRam } from '../data/mock-data.js';
 import { getState, getAnimalById, setState } from '../core/state.js';
-import { showAlert, showPrompt, showConfirm } from '../core/modal.js';
+import { showAlert, showPrompt, showConfirm, showSelect } from '../core/modal.js';
 import { navigateTo } from '../core/router.js';
 import { checkInbreeding, calculateCompatibility, calculateBirthDate } from '../core/breedingManager.js';
 import { calculateAnimalROI } from '../core/financeEngine.js';
@@ -660,19 +660,22 @@ function _initTasksTab() {
       const rawAnimal = getAnimalById(activeId) || {};
       const tagToUse = rawAnimal.tagID || 'TR-102';
 
-      // Tür seçimi
-      const typeOptions = TASK_TYPES.map(t => t.label).join('\n');
-      const typeStr = await showPrompt('Görev Türü', `Eklenecek görevin türünü yazınız:\n\n${typeOptions}\n\nÖrn: Aşı`, 'text', '📋');
-      if (!typeStr) return;
-      const matchedType = TASK_TYPES.find(t => t.label.toLowerCase().includes(typeStr.toLowerCase())) || TASK_TYPES[5];
+      // Tür seçimi (tıklanabilir butonlar)
+      const typeOptions = TASK_TYPES.map(t => ({ value: t.value, label: t.label, color: t.color, icon: t.label.split(' ')[0] }));
+      const selectedType = await showSelect(`Görev Türü Seçin (${tagToUse})`, typeOptions, '📋');
+      if (!selectedType) return;
+      const matchedType = TASK_TYPES.find(t => t.value === selectedType.value) || TASK_TYPES[5];
 
-      const title = await showPrompt('Görev Başlığı', 'Görev başlığını giriniz:', 'text', matchedType.label.split(' ')[0]);
+      const title = await showPrompt('Görev Başlığı', `${matchedType.label} görevi için başlık giriniz:`, 'text', matchedType.label.split(' ')[0]);
       if (!title) return;
 
       const desc = await showPrompt('Açıklama', 'Kısa açıklama (opsiyonel):', 'text', '📝') || '';
 
-      const prioStr = await showPrompt('Öncelik', 'Öncelik: Yüksek veya Normal', 'text', '⚡');
-      const prio = (prioStr && prioStr.toLowerCase().includes('yüksek')) ? 'High' : 'Normal';
+      const prioOption = await showSelect('Öncelik Seçin', [
+        { value: 'High', label: 'Yüksek Öncelik', color: '#ef4444', icon: '🔴' },
+        { value: 'Normal', label: 'Normal Öncelik', color: '#3b82f6', icon: '🟢' }
+      ], '⚡');
+      const prio = prioOption ? prioOption.value : 'Normal';
 
       addTask({
         title,

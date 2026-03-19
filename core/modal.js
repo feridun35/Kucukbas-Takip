@@ -234,3 +234,72 @@ export function showFormModal(title, fields, icon = '📝') {
     btnCancel.addEventListener('click', () => closeAndResolve(null));
   });
 }
+
+/**
+ * Seçim Modalı — Tıklanabilir butonlar ile seçim yapılmasını sağlar.
+ * @param {string} title
+ * @param {Array} options - [{ value, label, color, icon }]
+ * @param {string} icon
+ * @returns {Promise<Object|null>} Seçilen option objesi veya null
+ */
+export function showSelect(title, options, icon = '📋') {
+  return new Promise((resolve) => {
+    const container = _ensureModalContainer();
+
+    const optionsHTML = options.map(o => `
+      <button class="c-select-option" data-value="${o.value}" style="
+        display:flex; align-items:center; gap:10px; width:100%; padding:12px 16px;
+        border:1px solid rgba(255,255,255,0.1); border-radius:12px; background:var(--glass-bg);
+        color:var(--text-primary); cursor:pointer; font-size:0.95rem; font-weight:500;
+        transition:0.2s; margin-bottom:8px; text-align:left;
+        border-left:4px solid ${o.color || 'var(--accent-blue)'};">
+        <span style="font-size:1.2rem;">${o.icon || ''}</span>
+        <span>${o.label}</span>
+      </button>
+    `).join('');
+
+    const modalHTML = `
+      <div class="c-modal-overlay active">
+        <div class="c-modal-box" style="max-height:85vh; overflow-y:auto;">
+          <div class="c-modal-icon">${icon}</div>
+          <h3 class="c-modal-title" style="margin-bottom:16px;">${title}</h3>
+          <div style="margin-bottom:8px;">
+            ${optionsHTML}
+          </div>
+          <div class="c-modal-actions">
+            <button class="btn-secondary" id="btn-modal-cancel" style="width:100%;">İptal</button>
+          </div>
+        </div>
+      </div>
+    `;
+
+    container.innerHTML = modalHTML;
+
+    const overlay = container.querySelector('.c-modal-overlay');
+    const btnCancel = container.querySelector('#btn-modal-cancel');
+    const optBtns = container.querySelectorAll('.c-select-option');
+
+    const closeAndResolve = (result) => {
+      overlay.classList.remove('active');
+      setTimeout(() => { container.innerHTML = ''; resolve(result); }, 200);
+    };
+
+    optBtns.forEach(btn => {
+      btn.addEventListener('mouseenter', () => {
+        btn.style.background = 'rgba(255,255,255,0.08)';
+        btn.style.transform = 'scale(1.02)';
+      });
+      btn.addEventListener('mouseleave', () => {
+        btn.style.background = 'var(--glass-bg)';
+        btn.style.transform = 'scale(1)';
+      });
+      btn.addEventListener('click', () => {
+        const val = btn.getAttribute('data-value');
+        const selected = options.find(o => o.value === val) || null;
+        closeAndResolve(selected);
+      });
+    });
+
+    btnCancel.addEventListener('click', () => closeAndResolve(null));
+  });
+}
