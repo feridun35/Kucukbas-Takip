@@ -253,7 +253,7 @@ export function showSelect(title, options, icon = '📋') {
         color:var(--text-primary); cursor:pointer; font-size:0.95rem; font-weight:500;
         transition:0.2s; margin-bottom:8px; text-align:left;
         border-left:4px solid ${o.color || 'var(--accent-blue)'};">
-        <span style="font-size:1.2rem;">${o.icon || ''}</span>
+        ${o.icon ? `<span style="font-size:1.2rem;">${o.icon}</span>` : ''}
         <span>${o.label}</span>
       </button>
     `).join('');

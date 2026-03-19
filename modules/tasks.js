@@ -17,8 +17,8 @@ export function render() {
   
   const state = getState();
   const role = state.userRole || 'owner';
-  const tasks = getTasksForUser(role, 'herd');
-  const history = getTaskHistory('herd');
+  const tasks = getTasksForUser(role, 'all');
+  const history = getTaskHistory('all');
   const pendingCount = tasks.filter(t => t.status === 'pending').length;
 
   _container.innerHTML = `
@@ -106,7 +106,7 @@ export function init() {
 // ═══════════════════════════════════════
 async function _showAddTaskFlow(scope, animalTag) {
   // 1. Tür seçimi (tıklanabilir butonlar)
-  const typeOptions = TASK_TYPES.map(t => ({ value: t.value, label: t.label, color: t.color, icon: t.label.split(' ')[0] }));
+  const typeOptions = TASK_TYPES.map(t => ({ value: t.value, label: t.label, color: t.color }));
   const selectedType = await showSelect(
     `Görev Türü Seçin ${scope === 'herd' ? '(Sürü Görevi)' : '(Bireysel)'}`,
     typeOptions, '📋'

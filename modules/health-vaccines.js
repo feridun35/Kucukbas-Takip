@@ -22,7 +22,11 @@ export function init() {}
 
 function _renderVaccineAgenda() {
   const state = getState();
-  const vaccines = state.vaccines || [];
+  const vaccines = [...(state.vaccines || [])];
+
+  // Tarihsel öncelik sıralaması: upcoming → pending → done
+  const statusOrder = { 'upcoming': 0, 'pending': 1, 'done': 2 };
+  vaccines.sort((a, b) => (statusOrder[a.status] ?? 1) - (statusOrder[b.status] ?? 1));
 
   const items = vaccines.map(v => `
     <div class="agenda-item ${v.status}">

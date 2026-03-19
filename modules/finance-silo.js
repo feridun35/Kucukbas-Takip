@@ -75,7 +75,7 @@ export function init() {
 
       // 1. Hangi yem? (showSelect ile)
       const feedOptions = feedInventory.map(f => ({
-        value: f.id, label: `${f.icon} ${f.name} (Mevcut: ${f.amount} ${f.unit})`, color: '#10b981', icon: f.icon
+        value: f.id, label: `${f.icon} ${f.name} (Mevcut: ${f.amount} ${f.unit})`, color: '#10b981'
       }));
       const selectedFeed = await showSelect('Yem Türü Seçin', feedOptions, '🌾');
       if (!selectedFeed) return;

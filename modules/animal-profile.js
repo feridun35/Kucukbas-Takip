@@ -661,7 +661,7 @@ function _initTasksTab() {
       const tagToUse = rawAnimal.tagID || 'TR-102';
 
       // Tür seçimi (tıklanabilir butonlar)
-      const typeOptions = TASK_TYPES.map(t => ({ value: t.value, label: t.label, color: t.color, icon: t.label.split(' ')[0] }));
+      const typeOptions = TASK_TYPES.map(t => ({ value: t.value, label: t.label, color: t.color }));
       const selectedType = await showSelect(`Görev Türü Seçin (${tagToUse})`, typeOptions, '📋');
       if (!selectedType) return;
       const matchedType = TASK_TYPES.find(t => t.value === selectedType.value) || TASK_TYPES[5];
