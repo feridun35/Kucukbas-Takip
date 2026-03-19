@@ -19,16 +19,20 @@ export function render() {
   _container = document.createElement('div');
   _container.className = 'dashboard-page page-enter';
 
-  // State'e mock veri yükle
-  setState({
-    herdSummary: mockHerdData,
-    healthSummary: mockHealthData,
-    financeSummary: mockFinanceData,
-    sensors: mockSensorData,
-    alerts: mockAlerts
-  });
+  // State'e sadece sensör/finans mock yükle (hayvan verisi state.animals'tan gelir)
+  const currentState = getState();
+  if (!currentState.sensors || !currentState.sensors.temperature) {
+    setState({
+      sensors: mockSensorData,
+      alerts: currentState.alerts && currentState.alerts.length > 0 ? currentState.alerts : mockAlerts
+    });
+  }
+  if (!currentState.financeSummary || currentState.financeSummary.dailyFeedCost === 0) {
+    setState({ financeSummary: mockFinanceData });
+  }
 
   const state = getState();
+  const computed = _computeHerdStats(state);
 
   _container.innerHTML = `
     ${_renderHeader()}
@@ -36,7 +40,7 @@ export function render() {
     ${_renderFocusSelector(state.focusMode)}
     ${_renderKPIRow(state.focusMode)}
     <div class="section-title"><span class="dot"></span>Hızlı Durum</div>
-    ${_renderStatCards(state)}
+    ${_renderStatCards(state, computed)}
     <div class="section-title"><span class="dot"></span>Refah & Isıl Stres</div>
     ${_renderGaugePanel(state.sensors)}
   `;
@@ -56,14 +60,93 @@ export function init() {
       const mode = btn.dataset.focus;
       setState({ focusMode: mode });
 
-      // Butonları güncelle
       _container.querySelectorAll('.focus-btn').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
 
-      // KPI ve stat kartlarını güncelle
       _updateKPIRow(mode);
       _updateStatCards();
     });
+  });
+
+  // Alert swipe-to-dismiss
+  _container.querySelectorAll('.alert-card').forEach(card => {
+    let startX = 0;
+    let currentX = 0;
+    let swiping = false;
+
+    card.addEventListener('touchstart', (e) => {
+      startX = e.touches[0].clientX;
+      swiping = true;
+      card.style.transition = 'none';
+    });
+    card.addEventListener('touchmove', (e) => {
+      if (!swiping) return;
+      currentX = e.touches[0].clientX - startX;
+      if (currentX < 0) {
+        const progress = Math.min(Math.abs(currentX) / 150, 1);
+        card.style.transform = `translateX(${currentX}px) scale(${1 - progress * 0.05})`;
+        card.style.opacity = 1 - progress * 0.5;
+      }
+    });
+    card.addEventListener('touchend', () => {
+      swiping = false;
+      card.style.transition = 'transform 0.3s cubic-bezier(0.4, 0.0, 0.2, 1), opacity 0.3s';
+      if (currentX < -80) {
+        card.style.transform = 'translateX(-120%) scale(0.8)';
+        card.style.opacity = '0';
+        setTimeout(() => {
+          card.style.height = '0';
+          card.style.margin = '0';
+          card.style.padding = '0';
+          card.style.border = 'none';
+          card.style.overflow = 'hidden';
+        }, 300);
+      } else {
+        card.style.transform = 'translateX(0) scale(1)';
+        card.style.opacity = '1';
+      }
+      currentX = 0;
+    });
+
+    // Mouse swipe (desktop)
+    card.addEventListener('mousedown', (e) => {
+      startX = e.clientX;
+      swiping = true;
+      card.style.transition = 'none';
+      card.style.cursor = 'grabbing';
+    });
+    const onMouseMove = (e) => {
+      if (!swiping) return;
+      currentX = e.clientX - startX;
+      if (currentX < 0) {
+        const progress = Math.min(Math.abs(currentX) / 150, 1);
+        card.style.transform = `translateX(${currentX}px) scale(${1 - progress * 0.05})`;
+        card.style.opacity = 1 - progress * 0.5;
+      }
+    };
+    const onMouseUp = () => {
+      if (!swiping) return;
+      swiping = false;
+      card.style.transition = 'transform 0.3s cubic-bezier(0.4, 0.0, 0.2, 1), opacity 0.3s';
+      card.style.cursor = 'default';
+      if (currentX < -80) {
+        card.style.transform = 'translateX(-120%) scale(0.8)';
+        card.style.opacity = '0';
+        setTimeout(() => {
+          card.style.height = '0';
+          card.style.margin = '0';
+          card.style.padding = '0';
+          card.style.border = 'none';
+          card.style.overflow = 'hidden';
+        }, 300);
+      } else {
+        card.style.transform = 'translateX(0) scale(1)';
+        card.style.opacity = '1';
+      }
+      currentX = 0;
+    };
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
   });
 }
 
@@ -147,30 +230,52 @@ function _renderKPIRow(mode) {
   return `<div class="glass-card kpi-row" id="kpi-row">${items}</div>`;
 }
 
-function _renderStatCards(state) {
+function _computeHerdStats(state) {
+  const animals = state.animals || [];
+  const total = animals.length;
+  const sheep = animals.filter(a => ['Koyun', 'Koç', 'Kuzu'].includes(a.type)).length;
+  const goat = animals.filter(a => ['Keçi', 'Teke', 'Oğlak'].includes(a.type)).length;
+  const avgWeight = total > 0 ? (animals.reduce((s, a) => s + (a.weight || 0), 0) / total).toFixed(0) : 0;
+  const sick = animals.filter(a => a.status === 'danger').length;
+  const quarantine = animals.filter(a => a.status === 'warning').length;
+  const expectedBirths = animals.filter(a => a.group === 'Gebe').length;
+
+  return { total, sheep, goat, avgWeight, sick, quarantine, expectedBirths };
+}
+
+function _renderStatCards(state, computed) {
+  const c = computed || _computeHerdStats(state);
+  const fin = state.financeSummary || mockFinanceData;
+
+  // Yem stok gün hesabı
+  const feedInv = state.feedInventory || [];
+  const totalFeedKg = feedInv.filter(f => f.unit === 'kg').reduce((s, f) => s + f.amount, 0);
+  const dailyConsumption = 245; // kg (sürü geneli)
+  const feedDays = dailyConsumption > 0 ? Math.floor(totalFeedKg / dailyConsumption) : 0;
+
   const cards = [
     {
       label: 'Toplam Hayvan',
-      value: state.animals ? state.animals.length : state.herdSummary.total,
-      sub: `${state.herdSummary.sheep} koyun · ${state.herdSummary.goat} keçi`,
+      value: c.total,
+      sub: `${c.sheep} koyun · ${c.goat} keçi`,
       color: 'green'
     },
     {
       label: 'Beklenen Doğum',
-      value: state.healthSummary.expectedBirths,
-      sub: 'Önümüzdeki 30 gün',
+      value: c.expectedBirths,
+      sub: 'Gebe hayvan sayısı',
       color: 'purple'
     },
     {
-      label: 'Hasta / Karantina',
-      value: `${state.healthSummary.sick}/${state.healthSummary.quarantine}`,
-      sub: 'Tedavi altında',
+      label: 'Hasta / Riskli',
+      value: `${c.sick}/${c.quarantine}`,
+      sub: 'Kritik / Takipte',
       color: 'red'
     },
     {
       label: 'Günlük Yem Maliyeti',
-      value: `${state.financeSummary.dailyFeedCost.toLocaleString('tr-TR')}₺`,
-      sub: `ROI: %${state.financeSummary.roi} · ${state.financeSummary.feedStockDays} gün stok`,
+      value: `${fin.dailyFeedCost.toLocaleString('tr-TR')}₺`,
+      sub: `${feedDays} gün stok · ${totalFeedKg.toLocaleString('tr-TR')} kg`,
       color: 'amber'
     }
   ];

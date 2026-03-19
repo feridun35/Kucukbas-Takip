@@ -35,8 +35,14 @@ export function render() {
     healthStatus: rawAnimal.status || animalData.healthStatus,
     geneticsScore: rawAnimal.yieldScore || animalData.geneticsScore,
     focus: rawAnimal.focus || 'meat',
-    lineage: rawAnimal.lineage || animalData.lineage,
-    genetics: rawAnimal.genetics || animalData.genetics || { meat: 80, milk: 50, fertility: 75, resistance: 90, growth: 85 }
+    lineage: {
+      mother: rawAnimal.mother || (rawAnimal.lineage && rawAnimal.lineage.mother) || (animalData.lineage && animalData.lineage.mother) || null,
+      father: rawAnimal.father || (rawAnimal.lineage && rawAnimal.lineage.father) || (animalData.lineage && animalData.lineage.father) || null
+    },
+    genetics: rawAnimal.genetics || animalData.genetics || { meat: 80, milk: 50, fertility: 75, resistance: 90, growth: 85 },
+    gender: rawAnimal.gender || animalData.gender || 'Dişi',
+    group: rawAnimal.group || 'Besi',
+    rawGender: rawAnimal.gender || animalData.gender || 'Dişi'
   };
 
   const headerHtml = `
@@ -463,6 +469,20 @@ function _renderHealthTab(animal) {
       <button class="huge-btn btn-secondary" id="btn-ind-ai" style="width:100%; border-radius:24px; padding:16px; background:var(--glass-bg); border:1px dashed var(--accent-cyan);">
         <span class="btn-icon">🤖</span> AI Bireysel Teşhis
       </button>
+
+      ${animal.rawGender === 'Dişi' ? `
+      <div style="margin-top:var(--space-lg); padding-top:var(--space-md); border-top:1px solid rgba(168,85,247,0.2);">
+        <button class="huge-btn" id="btn-report-birth" style="width:100%; border-radius:24px; padding:16px; background:rgba(168,85,247,0.15); color:var(--accent-purple); border:1px solid rgba(168,85,247,0.3); font-weight:700;">
+          <span class="btn-icon">🐣</span> Doğum Bildir
+        </button>
+      </div>
+      ` : ''}
+
+      <div style="margin-top:${animal.rawGender === 'Dişi' ? 'var(--space-sm)' : 'var(--space-xl)'}; padding-top:var(--space-md); border-top:1px solid rgba(239,68,68,0.2);">
+        <button class="huge-btn" id="btn-report-death" style="width:100%; border-radius:24px; padding:16px; background:rgba(239,68,68,0.1); color:var(--danger-red); border:1px solid rgba(239,68,68,0.3); font-weight:700;">
+          <span class="btn-icon">☠️</span> Ölüm Bildir
+        </button>
+      </div>
     </div>
   `;
 }
@@ -498,6 +518,124 @@ function _initHealthTab() {
 
   const btnAi = _container.querySelector('#btn-ind-ai');
   if (btnAi) btnAi.addEventListener('click', () => showAlert('Yapay Zeka Teşhisi', '[SIM] Yapay zeka ile bireysel semptom izleme paneli', '🤖'));
+
+  // Doğum bildirimi (sadece dişilerde)
+  const btnBirth = _container.querySelector('#btn-report-birth');
+  if (btnBirth) {
+    btnBirth.addEventListener('click', async () => {
+      const state = getState();
+      const activeId = state.activeAnimalId || (state.animals && state.animals.length > 0 ? state.animals[0].id : null);
+      const rawAnimal = getAnimalById(activeId) || {};
+      const motherTag = rawAnimal.tagID || rawAnimal.id || 'Bilinmiyor';
+
+      // Doğan yavru bilgileri
+      const babyId = await showPrompt('Yavru Küpe No', `${motherTag} doğurdu! Yavrunun küpe numarasını giriniz:`, 'text', '🐣');
+      if (!babyId) return;
+
+      const genderOpt = await showSelect('Yavru Cinsiyeti', [
+        { value: 'Dişi', label: 'Dişi', color: '#ec4899' },
+        { value: 'Erkek', label: 'Erkek', color: '#3b82f6' }
+      ], '👶');
+      if (!genderOpt) return;
+
+      const weightStr = await showPrompt('Doğum Ağırlığı', 'Yavrunun doğum ağırlığı (kg):', 'number', '⚖️');
+      const birthWeight = parseFloat(weightStr) || 3.5;
+
+      const maleOpts = [
+        { value: 'Bilinmiyor', label: 'Bilinmiyor', color: '#6b7280' },
+        ...(state.animals || []).filter(a => a.gender === 'Erkek').map(a => ({
+          value: a.id, label: `${a.id} (${a.breed})`, color: '#3b82f6'
+        }))
+      ];
+      const fatherSel = await showSelect('Baba Küpe No', maleOpts, '🐑');
+      if (!fatherSel) return;
+      const fatherTag = fatherSel.value === 'Bilinmiyor' ? null : fatherSel.value;
+
+      // Yavruyu sürüye ekle
+      const motherBreed = rawAnimal.breed || 'Merinos';
+      const babyType = motherBreed === 'Saanen' 
+        ? (genderOpt.value === 'Dişi' ? 'Oğlak' : 'Oğlak') 
+        : (genderOpt.value === 'Dişi' ? 'Kuzu' : 'Kuzu');
+      const today = new Date().toISOString().split('T')[0];
+
+      const newBaby = {
+        id: babyId,
+        rfid: 'RFID-' + Math.floor(Math.random() * 90000 + 10000),
+        breed: motherBreed,
+        gender: genderOpt.value,
+        type: babyType,
+        group: 'Besi',
+        weight: birthWeight,
+        birthWeight: birthWeight,
+        bcs: 2.5,
+        status: 'good',
+        yieldScore: 70,
+        lastVaccine: '-',
+        focus: 'meat',
+        birthDate: today,
+        mother: motherTag,
+        father: fatherTag
+      };
+
+      const animals = [...(state.animals || [])];
+      animals.unshift(newBaby);
+
+      // Ananın grubunu Gebe'den Sağmal'a güncelle
+      const motherIdx = animals.findIndex(a => a.id === activeId);
+      if (motherIdx > -1 && animals[motherIdx].group === 'Gebe') {
+        animals[motherIdx] = { ...animals[motherIdx], group: 'Sağmal' };
+      }
+
+      setState({ animals });
+      await showAlert('Doğum Kaydedildi! 🎉', 
+        `${motherTag} → ${babyId} (${babyType}, ${genderOpt.value}, ${birthWeight} kg)\n` +
+        `Ana: ${motherTag}\nBaba: ${fatherTag || 'Bilinmiyor'}\n\nYavru sürüye eklendi.`, '🐣');
+      _rerender();
+    });
+  }
+
+  // Ölüm bildirimi
+  const btnDeath = _container.querySelector('#btn-report-death');
+  if (btnDeath) {
+    btnDeath.addEventListener('click', async () => {
+      const state = getState();
+      const activeId = state.activeAnimalId || (state.animals && state.animals.length > 0 ? state.animals[0].id : null);
+      const rawAnimal = getAnimalById(activeId) || {};
+      const tagToUse = rawAnimal.tagID || rawAnimal.id || 'Bilinmiyor';
+
+      const confirmed = await showConfirm(
+        '☠️ Ölüm Bildirimi',
+        `${tagToUse} küpe numaralı hayvanı ölü olarak bildirmek istediğinize emin misiniz?\n\nBu işlem geri alınamaz. Hayvan sürüden çıkarılacak ve kayıt geçmişe düşecektir.`,
+        '⚠️'
+      );
+
+      if (confirmed) {
+        // Sürüden çıkar
+        const animals = [...(state.animals || [])];
+        const idx = animals.findIndex(a => a.id === activeId);
+        if (idx > -1) animals.splice(idx, 1);
+
+        // Geçmişe kaydet
+        const taskHistory = [...(state.taskHistory || [])];
+        taskHistory.unshift({
+          id: 'DEATH-' + Date.now(),
+          title: `Ölüm Kaydı: ${tagToUse}`,
+          desc: `${rawAnimal.breed || ''} ${rawAnimal.type || ''} - ${rawAnimal.group || ''}. Sürüden çıkarıldı.`,
+          type: 'other',
+          prio: 'High',
+          scope: 'individual',
+          targetTag: tagToUse,
+          status: 'completed',
+          createdAt: new Date().toLocaleDateString('tr-TR', { day: '2-digit', month: 'short', year: 'numeric' }),
+          completedAt: new Date().toLocaleDateString('tr-TR', { day: '2-digit', month: 'short', year: 'numeric' })
+        });
+
+        setState({ animals, taskHistory });
+        await showAlert('Ölüm Kaydedildi', `${tagToUse} sürüden çıkarıldı ve kayıt geçmişe düştü.`, '😢');
+        navigateTo('herd-list');
+      }
+    });
+  }
 }
 
 function _renderIndividualVaccines(animal) {

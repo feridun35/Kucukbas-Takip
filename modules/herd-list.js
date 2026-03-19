@@ -176,15 +176,31 @@ function _attachEvents() {
   const addBtn = _container.querySelector('#btn-add-animal');
   if (addBtn) {
     addBtn.addEventListener('click', async () => {
+      const state = getState();
+      const femaleOpts = ['Bilinmiyor', ...(state.animals || []).filter(a => a.gender === 'Dişi').map(a => a.id)];
+      const maleOpts = ['Bilinmiyor', ...(state.animals || []).filter(a => a.gender === 'Erkek').map(a => a.id)];
+
       const result = await showFormModal('Yeni Hayvan', [
         { id: 'id', label: 'Küpe No (RFID ile tarayabilirsiniz)', type: 'text', placeholder: 'Örn: TR-500' },
         { id: 'breed', label: 'Irk', type: 'select', options: ['Merinos', 'Kıvırcık', 'İvesi', 'Saanen', 'Karakaya'] },
         { id: 'gender', label: 'Cinsiyet', type: 'select', options: ['Dişi', 'Erkek'] },
         { id: 'group', label: 'Grup', type: 'select', options: ['Besi', 'Sağmal', 'Gebe', 'Boş', 'Damızlık'] },
-        { id: 'weight', label: 'Güncel Ağırlık (kg)', type: 'number', placeholder: 'Örn: 45' }
+        { id: 'weight', label: 'Güncel Ağırlık (kg)', type: 'number', placeholder: 'Örn: 45' },
+        { id: 'ageMonths', label: 'Yaş (ay olarak)', type: 'number', placeholder: 'Örn: 18' },
+        { id: 'mother', label: 'Ana Küpe No', type: 'select', options: femaleOpts },
+        { id: 'father', label: 'Baba Küpe No', type: 'select', options: maleOpts }
       ], '🐑');
 
       if (result && result.id) {
+        // Gruba göre verim odağı otomatik belirle
+        const groupToFocus = { 'Sağmal': 'milk', 'Gebe': 'breed', 'Damızlık': 'breed', 'Besi': 'meat', 'Boş': 'meat' };
+
+        // Yaştan doğum tarihi hesapla
+        const ageMonths = parseInt(result.ageMonths) || 18;
+        const birthDate = new Date();
+        birthDate.setMonth(birthDate.getMonth() - ageMonths);
+        const birthDateStr = birthDate.toISOString().split('T')[0];
+
         const newAnimal = {
           id: result.id,
           rfid: 'RFID-' + Math.floor(Math.random() * 90000 + 10000),
@@ -196,7 +212,11 @@ function _attachEvents() {
           bcs: 3,
           status: 'good',
           yieldScore: 80,
-          lastVaccine: '-'
+          lastVaccine: '-',
+          focus: groupToFocus[result.group] || 'meat',
+          birthDate: birthDateStr,
+          mother: result.mother === 'Bilinmiyor' ? null : result.mother,
+          father: result.father === 'Bilinmiyor' ? null : result.father
         };
 
         const currentAnimals = getState().animals;
