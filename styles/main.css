@@ -195,7 +195,11 @@ ul, ol { list-style: none; }
   border-radius: var(--radius-md);
   background: rgba(239, 68, 68, 0.08);
   border: 1px solid rgba(239, 68, 68, 0.2);
-  animation: alertSlide 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+  animation: alertSlide 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+  touch-action: pan-y;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: grab;
 }
 
 .alert-card.warning {

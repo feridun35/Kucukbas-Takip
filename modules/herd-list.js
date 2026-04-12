@@ -196,10 +196,17 @@ function _attachEvents() {
         const groupToFocus = { 'Sağmal': 'milk', 'Gebe': 'breed', 'Damızlık': 'breed', 'Besi': 'meat', 'Boş': 'meat' };
 
         // Yaştan doğum tarihi hesapla
-        const ageMonths = parseInt(result.ageMonths) || 18;
-        const birthDate = new Date();
-        birthDate.setMonth(birthDate.getMonth() - ageMonths);
-        const birthDateStr = birthDate.toISOString().split('T')[0];
+        const ageInput = result.ageMonths;
+        let birthDateStr = 'Bilinmiyor';
+        if (ageInput && ageInput.trim() !== '') {
+          const ageMonths = parseInt(ageInput) || 18;
+          const birthDate = new Date();
+          birthDate.setMonth(birthDate.getMonth() - ageMonths);
+          birthDateStr = birthDate.toISOString().split('T')[0];
+        }
+
+        const weightInput = result.weight;
+        const finalWeight = (weightInput && weightInput.trim() !== '') ? parseFloat(weightInput) : 'Bilinmiyor';
 
         const newAnimal = {
           id: result.id,
@@ -208,15 +215,15 @@ function _attachEvents() {
           gender: result.gender,
           type: result.breed === 'Saanen' ? (result.gender==='Dişi'?'Keçi':'Teke') : (result.gender==='Dişi'?'Koyun':'Koç'),
           group: result.group,
-          weight: parseFloat(result.weight) || 0,
+          weight: finalWeight,
           bcs: 3,
           status: 'good',
           yieldScore: 80,
           lastVaccine: '-',
           focus: groupToFocus[result.group] || 'meat',
           birthDate: birthDateStr,
-          mother: result.mother === 'Bilinmiyor' ? null : result.mother,
-          father: result.father === 'Bilinmiyor' ? null : result.father
+          mother: result.mother || 'Bilinmiyor',
+          father: result.father || 'Bilinmiyor'
         };
 
         const currentAnimals = getState().animals;

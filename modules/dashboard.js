@@ -37,12 +37,12 @@ export function render() {
   _container.innerHTML = `
     ${_renderHeader()}
     ${_renderAlerts(state.alerts)}
-    ${_renderFocusSelector(state.focusMode)}
-    ${_renderKPIRow(state.focusMode)}
-    <div class="section-title"><span class="dot"></span>Hızlı Durum</div>
-    ${_renderStatCards(state, computed)}
     <div class="section-title"><span class="dot"></span>Refah & Isıl Stres</div>
     ${_renderGaugePanel(state.sensors)}
+    <div class="section-title"><span class="dot"></span>Hızlı Durum</div>
+    ${_renderStatCards(state, computed)}
+    ${_renderFocusSelector(state.focusMode)}
+    ${_renderKPIRow(state.focusMode)}
   `;
 
   return _container;
@@ -74,79 +74,71 @@ export function init() {
     let currentX = 0;
     let swiping = false;
 
-    card.addEventListener('touchstart', (e) => {
-      startX = e.touches[0].clientX;
-      swiping = true;
-      card.style.transition = 'none';
-    });
-    card.addEventListener('touchmove', (e) => {
-      if (!swiping) return;
-      currentX = e.touches[0].clientX - startX;
-      if (currentX < 0) {
-        const progress = Math.min(Math.abs(currentX) / 150, 1);
-        card.style.transform = `translateX(${currentX}px) scale(${1 - progress * 0.05})`;
-        card.style.opacity = 1 - progress * 0.5;
-      }
-    });
-    card.addEventListener('touchend', () => {
-      swiping = false;
-      card.style.transition = 'transform 0.3s cubic-bezier(0.4, 0.0, 0.2, 1), opacity 0.3s';
-      if (currentX < -80) {
-        card.style.transform = 'translateX(-120%) scale(0.8)';
-        card.style.opacity = '0';
-        setTimeout(() => {
-          card.style.height = '0';
-          card.style.margin = '0';
-          card.style.padding = '0';
-          card.style.border = 'none';
-          card.style.overflow = 'hidden';
-        }, 300);
-      } else {
-        card.style.transform = 'translateX(0) scale(1)';
-        card.style.opacity = '1';
-      }
-      currentX = 0;
-    });
-
-    // Mouse swipe (desktop)
-    card.addEventListener('mousedown', (e) => {
+    card.addEventListener('pointerdown', (e) => {
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      e.preventDefault();
+      card.setPointerCapture(e.pointerId);
       startX = e.clientX;
       swiping = true;
       card.style.transition = 'none';
       card.style.cursor = 'grabbing';
     });
-    const onMouseMove = (e) => {
+
+    card.addEventListener('pointermove', (e) => {
       if (!swiping) return;
       currentX = e.clientX - startX;
       if (currentX < 0) {
-        const progress = Math.min(Math.abs(currentX) / 150, 1);
-        card.style.transform = `translateX(${currentX}px) scale(${1 - progress * 0.05})`;
-        card.style.opacity = 1 - progress * 0.5;
+        card.style.transform = `translateX(${currentX}px)`;
+        card.style.opacity = '1';
       }
-    };
-    const onMouseUp = () => {
+    });
+
+    const endSwipe = (e) => {
       if (!swiping) return;
       swiping = false;
+      try { card.releasePointerCapture(e.pointerId); } catch(ex){}
+      
       card.style.transition = 'transform 0.3s cubic-bezier(0.4, 0.0, 0.2, 1), opacity 0.3s';
       card.style.cursor = 'default';
+      
       if (currentX < -80) {
-        card.style.transform = 'translateX(-120%) scale(0.8)';
+        card.style.transform = 'translateX(-120%)';
         card.style.opacity = '0';
         setTimeout(() => {
-          card.style.height = '0';
-          card.style.margin = '0';
-          card.style.padding = '0';
-          card.style.border = 'none';
+          // Yüksekliği animasyonla daralt, böylece altındakiler yumuşakça yukarı kaysın
+          const h = card.offsetHeight;
+          card.style.transition = 'height 0.3s ease, margin 0.3s ease, padding 0.3s ease, opacity 0.3s ease';
+          card.style.height = h + 'px';
           card.style.overflow = 'hidden';
+          // Force reflow
+          card.offsetHeight;
+          card.style.height = '0';
+          card.style.marginTop = '0';
+          card.style.marginBottom = '0';
+          card.style.paddingTop = '0';
+          card.style.paddingBottom = '0';
+          card.style.border = 'none';
+          setTimeout(() => {
+            card.remove();
+            const container = _container.querySelector('.alerts-container');
+            if (container && container.children.length === 0) {
+              container.innerHTML = `
+                <div class="glass-card" style="text-align:center; padding:20px; color:var(--text-muted); font-style:italic; animation: pageIn 0.3s ease;">
+                  Her şey yolunda, iyi günler.
+                </div>
+              `;
+            }
+          }, 300);
         }, 300);
       } else {
-        card.style.transform = 'translateX(0) scale(1)';
-        card.style.opacity = '1';
+        card.style.transform = 'translateX(0)';
       }
       currentX = 0;
     };
-    document.addEventListener('mousemove', onMouseMove);
-    document.addEventListener('mouseup', onMouseUp);
+
+    card.addEventListener('pointerup', endSwipe);
+    card.addEventListener('pointercancel', endSwipe);
+
   });
 }
 
@@ -175,7 +167,16 @@ function _renderHeader() {
 }
 
 function _renderAlerts(alerts) {
-  if (!alerts || alerts.length === 0) return '';
+  if (!alerts || alerts.length === 0) {
+    return `
+      <div class="section-title"><span class="dot" style="background:var(--danger-red);box-shadow:0 0 8px var(--danger-red-glow)"></span>Akıllı Asistan</div>
+      <div class="alerts-container" style="touch-action: pan-y;">
+        <div class="glass-card" style="text-align:center; padding:20px; color:var(--text-muted); font-style:italic;">
+          Her şey yolunda, iyi günler.
+        </div>
+      </div>
+    `;
+  }
 
   const typeClassMap = { danger: '', warning: 'warning', info: 'info' };
 

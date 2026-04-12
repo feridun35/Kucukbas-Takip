@@ -541,6 +541,10 @@ function _initHealthTab() {
       const weightStr = await showPrompt('Doğum Ağırlığı', 'Yavrunun doğum ağırlığı (kg):', 'number', '⚖️');
       const birthWeight = parseFloat(weightStr) || 3.5;
 
+      const dateStr = await showPrompt('Doğum Tarihi', 'Doğum tarihini seçin:', 'date', '📅');
+      const todayStr = new Date().toISOString().split('T')[0];
+      const birthDateVal = dateStr ? dateStr : todayStr;
+
       const maleOpts = [
         { value: 'Bilinmiyor', label: 'Bilinmiyor', color: '#6b7280' },
         ...(state.animals || []).filter(a => a.gender === 'Erkek').map(a => ({
@@ -572,7 +576,7 @@ function _initHealthTab() {
         yieldScore: 70,
         lastVaccine: '-',
         focus: 'meat',
-        birthDate: today,
+        birthDate: birthDateVal,
         mother: motherTag,
         father: fatherTag
       };
@@ -610,6 +614,9 @@ function _initHealthTab() {
       );
 
       if (confirmed) {
+        let deathDate = await showPrompt('Ölüm Tarihi', 'Hayvanın ölüm tarihini seçin:', 'date', '📅');
+        if (!deathDate) deathDate = new Date().toISOString().split('T')[0];
+
         // Sürüden çıkar
         const animals = [...(state.animals || [])];
         const idx = animals.findIndex(a => a.id === activeId);
@@ -626,8 +633,8 @@ function _initHealthTab() {
           scope: 'individual',
           targetTag: tagToUse,
           status: 'completed',
-          createdAt: new Date().toLocaleDateString('tr-TR', { day: '2-digit', month: 'short', year: 'numeric' }),
-          completedAt: new Date().toLocaleDateString('tr-TR', { day: '2-digit', month: 'short', year: 'numeric' })
+          createdAt: deathDate,
+          completedAt: deathDate
         });
 
         setState({ animals, taskHistory });
