@@ -35,7 +35,10 @@ function _renderContent() {
     // Search
     if (_searchTerm) {
       const term = _searchTerm.toLowerCase();
-      if (!a.id.toLowerCase().includes(term) && !a.rfid.toLowerCase().includes(term)) {
+      const matchId = a.id && a.id.toLowerCase().includes(term);
+      const matchRfid = a.rfid && a.rfid.toLowerCase().includes(term);
+      const matchNickname = a.nickname && a.nickname.toLowerCase().includes(term);
+      if (!matchId && !matchRfid && !matchNickname) {
         return false;
       }
     }
@@ -68,7 +71,7 @@ function _renderContent() {
       <!-- Arama -->
       <div class="search-box" style="margin-bottom:12px; position:relative;">
         <span style="position:absolute; left:12px; top:50%; transform:translateY(-50%); opacity:0.5;">🔍</span>
-        <input type="text" id="search-animal" value="${_searchTerm}" placeholder="Küpe No veya RFID Ara..." 
+        <input type="text" id="search-animal" value="${_searchTerm}" placeholder="Küpe No, Lakap veya RFID Ara..." 
                style="width:100%; box-sizing:border-box; padding:12px 12px 12px 36px; border-radius:12px; background:var(--glass-bg); border:1px solid var(--glass-border); color:var(--text-primary); font-family:inherit;">
       </div>
 
@@ -139,14 +142,18 @@ function _renderAnimalCard(animal) {
     ? `<span style="font-size:0.6rem; background:rgba(239,68,68,0.15); color:var(--danger-red); padding:1px 6px; border-radius:6px; font-weight:600; margin-left:6px;">⚕️ ${ws.meatDaysLeft > 0 ? ws.meatDaysLeft + 'g' : ''}</span>`
     : '';
 
+  const nicknameBadge = animal.nickname
+    ? `<span style="font-size:0.85rem; color:var(--accent-blue); font-weight:600; margin-left:6px;">("${animal.nickname}")</span>`
+    : '';
+
   return `
     <div class="glass-card animal-list-card" data-id="${animal.id}" style="padding:12px; display:flex; align-items:center; gap:12px; cursor:pointer;">
       <div class="a-avatar" style="width:48px; height:48px; border-radius:30%; background:var(--bg-primary); display:flex; align-items:center; justify-content:center; font-size:1.5rem; border:2px solid ${statusColor};">
         ${animal.type === 'Keçi' || animal.type === 'Oğlak' || animal.type === 'Teke' ? '🐐' : '🐑'}
       </div>
       <div class="a-info" style="flex:1; min-width:0;">
-        <div style="font-weight:700; font-size:1rem; color:var(--text-primary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${animal.id}${quarantineBadge}</div>
-        <div style="font-size:0.75rem; color:var(--text-secondary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${animal.breed} &bull; ${animal.group}</div>
+        <div style="font-weight:700; font-size:1rem; color:var(--text-primary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${animal.id}${nicknameBadge}${quarantineBadge}</div>
+        <div style="font-size:0.75rem; color:var(--text-secondary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${animal.breed} ${animal.type ? `(${animal.type})` : ''} &bull; ${animal.group}</div>
       </div>
       <div class="a-metrics" style="text-align:right; flex-shrink:0;">
         <div style="font-size:0.9rem; font-weight:700; white-space:nowrap;">${animal.weight !== 'Bilinmiyor' && animal.weight > 0 ? animal.weight + ' kg' : '-'}</div>
@@ -205,9 +212,41 @@ function _attachEvents() {
     const femaleOpts = ['Bilinmiyor', ...(state.animals || []).filter(a => a.gender === 'Dişi').map(a => a.id)];
     const maleOpts = ['Bilinmiyor', ...(state.animals || []).filter(a => a.gender === 'Erkek').map(a => a.id)];
 
+    const breedOptions = [
+      'Anadolu Merinosu',
+      'Karacabey Merinosu',
+      'Kıvırcık',
+      'İvesi (Awassi)',
+      'Akkaraman (Kangal)',
+      'Morkaraman',
+      'Karayaka',
+      'Sakız (Chios)',
+      'Dağlıç',
+      'Pırlak (Ramlıç)',
+      'Hemşin',
+      'Norduz',
+      'Bafra',
+      'Romanov',
+      'Dorper',
+      'Suffolk',
+      'Texel',
+      'Lacaune',
+      'Assaf',
+      'Saanen',
+      'Kıl Keçisi (Kara Keçi)',
+      'Ankara Keçisi (Tiftik)',
+      'Halep / Damascus (Şam Keçisi)',
+      'Honamlı',
+      'Maltız (Maltese)',
+      'Alpine',
+      'Boer'
+    ];
+
     const result = await showFormModal('Yeni Hayvan Kaydı', [
       { id: 'id', label: 'Küpe No (RFID ile tarayabilirsiniz)', type: 'text', placeholder: 'Örn: TR-500' },
-      { id: 'breed', label: 'Irk', type: 'select', options: ['Merinos', 'Kıvırcık', 'İvesi', 'Saanen', 'Karakaya'] },
+      { id: 'nickname', label: 'Hayvan Lakabı / İsim (Opsiyonel)', type: 'text', placeholder: 'Örn: Pamuk, Kral, Karabaş' },
+      { id: 'type', label: 'Hayvan Türü / Kategorisi', type: 'select', options: ['Kuzu', 'Oğlak', 'Koyun', 'Koç', 'Keçi', 'Teke'] },
+      { id: 'breed', label: 'Irk', type: 'select', options: breedOptions },
       { id: 'gender', label: 'Cinsiyet', type: 'select', options: ['Dişi', 'Erkek'] },
       { id: 'group', label: 'Grup', type: 'select', options: ['Besi', 'Sağmal', 'Gebe', 'Boş', 'Damızlık'] },
       { id: 'weight', label: 'Güncel Ağırlık (kg)', type: 'number', placeholder: 'Örn: 45' },
@@ -231,12 +270,21 @@ function _attachEvents() {
       const weightInput = result.weight;
       const finalWeight = (weightInput && weightInput.trim() !== '') ? parseFloat(weightInput) : 0;
 
+      // Otomatik tür tespiti (eğer kullanıcı seçmediyse)
+      const isGoatBreed = ['Saanen', 'Kıl Keçisi', 'Ankara Keçisi', 'Halep', 'Honamlı', 'Maltız', 'Alpine', 'Boer'].some(b => (result.breed || '').includes(b));
+      const defaultType = isGoatBreed
+        ? (result.gender === 'Dişi' ? 'Keçi' : 'Teke')
+        : (result.gender === 'Dişi' ? 'Koyun' : 'Koç');
+
+      const animalType = result.type || defaultType;
+
       const newAnimal = {
         id: result.id.trim(),
+        nickname: result.nickname ? result.nickname.trim() : '',
         rfid: 'RFID-' + Math.floor(Math.random() * 90000 + 10000),
-        breed: result.breed || 'Merinos',
+        breed: result.breed || 'Anadolu Merinosu',
         gender: result.gender || 'Dişi',
-        type: result.breed === 'Saanen' ? (result.gender === 'Dişi' ? 'Keçi' : 'Teke') : (result.gender === 'Dişi' ? 'Koyun' : 'Koç'),
+        type: animalType,
         group: result.group || 'Besi',
         weight: finalWeight,
         bcs: 3,
@@ -253,7 +301,8 @@ function _attachEvents() {
       currentAnimals.unshift(newAnimal);
       setState({ animals: currentAnimals, activeAnimalId: newAnimal.id });
 
-      await showAlert('Başarılı', `${newAnimal.id} başarıyla sürüye eklendi.`, '✅');
+      const displayName = newAnimal.nickname ? `${newAnimal.id} ("${newAnimal.nickname}")` : newAnimal.id;
+      await showAlert('Başarılı', `${displayName} (${newAnimal.type}) başarıyla sürüye eklendi.`, '✅');
       _renderContent();
     }
   };

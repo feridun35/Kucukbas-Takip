@@ -52,8 +52,10 @@ export function render() {
   
   const currentAnimal = {
     tagID: rawAnimal.id || animalData.tagID,
+    nickname: rawAnimal.nickname || '',
     rfidCode: rawAnimal.rfid || animalData.rfidCode,
-    breed: rawAnimal.breed ? `${rawAnimal.breed} ${rawAnimal.type || ''}` : animalData.breed,
+    breed: rawAnimal.breed ? `${rawAnimal.breed} ${rawAnimal.type ? `(${rawAnimal.type})` : ''}` : animalData.breed,
+    type: rawAnimal.type || '',
     gender: rawAnimal.gender || animalData.gender,
     currentWeight: rawAnimal.weight || animalData.currentWeight,
     birthDate: rawAnimal.birthDate || animalData.birthDate,
@@ -72,14 +74,18 @@ export function render() {
     rawGender: rawAnimal.gender || animalData.gender || 'Dişi'
   };
 
+  const nicknameBadge = currentAnimal.nickname
+    ? `<span style="font-size:0.95rem; color:var(--accent-blue); font-weight:600; margin-left:6px;">("${currentAnimal.nickname}")</span>`
+    : '';
+
   const headerHtml = `
     <div class="animal-header">
       <div class="animal-icon-wrapper">
-        ${currentAnimal.breed.includes('Keçi') || currentAnimal.breed.includes('Oğlak') || currentAnimal.breed.includes('Teke') ? '🐐' : '🐑'}
+        ${currentAnimal.breed.includes('Keçi') || currentAnimal.breed.includes('Oğlak') || currentAnimal.breed.includes('Teke') || currentAnimal.type === 'Keçi' || currentAnimal.type === 'Oğlak' || currentAnimal.type === 'Teke' ? '🐐' : '🐑'}
       </div>
       <div class="animal-info-main">
         <div class="animal-tag">
-          ${currentAnimal.tagID}
+          ${currentAnimal.tagID}${nicknameBadge}
           <div class="animal-status-indicator ${currentAnimal.healthStatus}"></div>
         </div>
         <div class="animal-breed">${currentAnimal.breed} • ${currentAnimal.rfidCode}</div>
@@ -190,6 +196,12 @@ function _renderInfoTab(animal) {
     </div>
 
     <div class="animal-data-grid">
+      ${animal.nickname ? `
+      <div class="animal-data-card" style="grid-column: span 3; background:rgba(59,130,246,0.08); border:1px solid rgba(59,130,246,0.2);">
+        <span class="animal-data-label">Lakap / İsim</span>
+        <span class="animal-data-value" style="color:var(--accent-blue); font-weight:700;">${animal.nickname}</span>
+      </div>
+      ` : ''}
       <div class="animal-data-card">
         <span class="animal-data-label">Ağırlık</span>
         <span class="animal-data-value" id="disp-weight">${animal.currentWeight} kg</span>
@@ -199,8 +211,8 @@ function _renderInfoTab(animal) {
         <span class="animal-data-value">${_calculateAge(animal.birthDate)}</span>
       </div>
       <div class="animal-data-card">
-        <span class="animal-data-label">Cinsiyet</span>
-        <span class="animal-data-value">${animal.gender}</span>
+        <span class="animal-data-label">Cinsiyet / Tür</span>
+        <span class="animal-data-value">${animal.gender} ${animal.type ? `(${animal.type})` : ''}</span>
       </div>
       <div class="animal-data-card full-span" style="grid-column: span 3; flex-direction: row; justify-content: space-between;">
         <span class="animal-data-label">Doğum Ağırlığı: <strong style="color:var(--text-primary)">${animal.birthWeight} kg</strong></span>

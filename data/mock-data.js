@@ -142,16 +142,16 @@ export const animalData = {
 
 // ── SÜRÜ DİZİSİ (MULTI-ANIMAL) ──
 export const animalsArray = [
-  { id: 'TR-102', rfid: 'RFID-98302X91', breed: 'Merinos', gender: 'Dişi', type: 'Koyun', group: 'Gebe', weight: 68.5, bcs: 3, status: 'good', yieldScore: 92, lastVaccine: '2025-10-10', focus: 'breed' },
-  { id: 'TR-088', rfid: 'RFID-12300X88', breed: 'Kıvırcık', gender: 'Dişi', type: 'Koyun', group: 'Sağmal', weight: 55.2, bcs: 2.5, status: 'warning', yieldScore: 68, lastVaccine: '2025-05-12', focus: 'milk' },
-  { id: 'TR-210', rfid: 'RFID-99911X21', breed: 'Kıvırcık', gender: 'Erkek', type: 'Koç', group: 'Damızlık', weight: 110.4, bcs: 4, status: 'good', yieldScore: 95, lastVaccine: '2025-11-20', focus: 'breed' },
-  { id: 'TR-045', rfid: 'RFID-44422X45', breed: 'Merinos', gender: 'Dişi', type: 'Koyun', group: 'Boş', weight: 62.0, bcs: 3.5, status: 'good', yieldScore: 85, lastVaccine: '2025-08-15', focus: 'meat' },
-  { id: 'TR-099', rfid: 'RFID-11133X99', breed: 'İvesi', gender: 'Dişi', type: 'Koyun', group: 'Sağmal', weight: 58.1, bcs: 1.5, status: 'danger', yieldScore: 45, lastVaccine: '2024-12-01', focus: 'milk' },
-  { id: 'TR-301', rfid: 'RFID-55544X30', breed: 'Karakaya', gender: 'Erkek', type: 'Teke', group: 'Damızlık', weight: 85.0, bcs: 3.5, status: 'good', yieldScore: 88, lastVaccine: '2025-09-10', focus: 'breed' },
-  { id: 'TR-112', rfid: 'RFID-66655X11', breed: 'Saanen', gender: 'Dişi', type: 'Keçi', group: 'Sağmal', weight: 48.5, bcs: 3, status: 'good', yieldScore: 94, lastVaccine: '2026-01-05', focus: 'milk' },
-  { id: 'TR-115', rfid: 'RFID-77766X15', breed: 'Saanen', gender: 'Dişi', type: 'Keçi', group: 'Gebe', weight: 52.0, bcs: 3.5, status: 'good', yieldScore: 90, lastVaccine: '2026-01-05', focus: 'breed' },
-  { id: 'TR-004', rfid: 'RFID-88877X04', breed: 'Merinos', gender: 'Dişi', type: 'Kuzu', group: 'Besi', weight: 28.5, bcs: 2.5, status: 'warning', yieldScore: 75, lastVaccine: '2026-02-14', focus: 'meat' },
-  { id: 'TR-005', rfid: 'RFID-99988X05', breed: 'Merinos', gender: 'Erkek', type: 'Kuzu', group: 'Besi', weight: 32.0, bcs: 3, status: 'good', yieldScore: 82, lastVaccine: '2026-02-14', focus: 'meat' }
+  { id: 'TR-102', nickname: 'Pamuk', rfid: 'RFID-98302X91', breed: 'Merinos', gender: 'Dişi', type: 'Koyun', group: 'Gebe', weight: 68.5, bcs: 3, status: 'good', yieldScore: 92, lastVaccine: '2025-10-10', focus: 'breed' },
+  { id: 'TR-088', nickname: 'Benekli', rfid: 'RFID-12300X88', breed: 'Kıvırcık', gender: 'Dişi', type: 'Koyun', group: 'Sağmal', weight: 55.2, bcs: 2.5, status: 'warning', yieldScore: 68, lastVaccine: '2025-05-12', focus: 'milk' },
+  { id: 'TR-210', nickname: 'Karabaş', rfid: 'RFID-99911X21', breed: 'Kıvırcık', gender: 'Erkek', type: 'Koç', group: 'Damızlık', weight: 110.4, bcs: 4, status: 'good', yieldScore: 95, lastVaccine: '2025-11-20', focus: 'breed' },
+  { id: 'TR-045', nickname: 'Gümüş', rfid: 'RFID-44422X45', breed: 'Merinos', gender: 'Dişi', type: 'Koyun', group: 'Boş', weight: 62.0, bcs: 3.5, status: 'good', yieldScore: 85, lastVaccine: '2025-08-15', focus: 'meat' },
+  { id: 'TR-099', nickname: 'Sarıgül', rfid: 'RFID-11133X99', breed: 'İvesi', gender: 'Dişi', type: 'Koyun', group: 'Sağmal', weight: 58.1, bcs: 1.5, status: 'danger', yieldScore: 45, lastVaccine: '2024-12-01', focus: 'milk' },
+  { id: 'TR-301', nickname: 'Kral', rfid: 'RFID-55544X30', breed: 'Karakaya', gender: 'Erkek', type: 'Teke', group: 'Damızlık', weight: 85.0, bcs: 3.5, status: 'good', yieldScore: 88, lastVaccine: '2025-09-10', focus: 'breed' },
+  { id: 'TR-112', nickname: 'Sütlü', rfid: 'RFID-66655X11', breed: 'Saanen', gender: 'Dişi', type: 'Keçi', group: 'Sağmal', weight: 48.5, bcs: 3, status: 'good', yieldScore: 94, lastVaccine: '2026-01-05', focus: 'milk' },
+  { id: 'TR-115', nickname: 'Kınalı', rfid: 'RFID-77766X15', breed: 'Saanen', gender: 'Dişi', type: 'Keçi', group: 'Gebe', weight: 52.0, bcs: 3.5, status: 'good', yieldScore: 90, lastVaccine: '2026-01-05', focus: 'breed' },
+  { id: 'TR-004', nickname: 'Boncuk', rfid: 'RFID-88877X04', breed: 'Merinos', gender: 'Dişi', type: 'Kuzu', group: 'Besi', weight: 28.5, bcs: 2.5, status: 'warning', yieldScore: 75, lastVaccine: '2026-02-14', focus: 'meat' },
+  { id: 'TR-005', nickname: 'Kartal', rfid: 'RFID-99988X05', breed: 'Merinos', gender: 'Erkek', type: 'Kuzu', group: 'Besi', weight: 32.0, bcs: 3, status: 'good', yieldScore: 82, lastVaccine: '2026-02-14', focus: 'meat' }
 ];
 
 // ── Borsa ve Piyasa Verileri (Mock) ──
