@@ -5,7 +5,7 @@
 
 import { registerRoute, initRouter, navigateTo } from './core/router.js';
 import { setState, loadTenantState } from './core/state.js';
-import { getCurrentUser, isAuthenticated } from './core/auth.js';
+import { getCurrentUser, isAuthenticated, syncUsersFromCloud } from './core/auth.js';
 import { startSensorPolling } from './core/sensors.js';
 import { initSyncManager } from './core/syncManager.js';
 import { renderNavBar } from './modules/navigation.js';
@@ -37,6 +37,9 @@ function initApp() {
 
   // Bulut senkronizasyon yöneticisini başlat
   initSyncManager();
+
+  // Kullanıcı hesap kaydını Supabase bulut ile iki yönlü senkronize et
+  syncUsersFromCloud().catch(err => console.error('[Auth] Startup user sync error:', err));
 
   // Aktif oturum varsa ilgili kiracının (tenant) izole verisini yükle
   if (isAuthenticated()) {

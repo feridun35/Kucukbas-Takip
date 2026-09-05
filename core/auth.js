@@ -28,31 +28,44 @@ const USERS_REGISTRY_KEY = 'shepherd_users_registry';
 const GLOBAL_USERS_SYNC_KEY = 'shepherd_global_users_registry';
 
 /**
- * Supabase bulutundaki kullanıcı kaydını çekip yerel kullanıcı listesi ile birleştirir
+ * Supabase bulutundaki kullanıcı kaydını çekip yerel kullanıcı listesi ile iki yönlü eşgüdümlü birleştirir
  */
 export async function syncUsersFromCloud() {
   try {
     const cloudUsers = await pullCloudStateToLocal(GLOBAL_USERS_SYNC_KEY);
-    if (Array.isArray(cloudUsers) && cloudUsers.length > 0) {
-      const localUsers = getRegisteredUsers();
-      const mergedMap = new Map();
+    const localUsers = getRegisteredUsers();
+    const mergedMap = new Map();
 
-      // Önce yerel kullanıcıları ekle
+    // 1. Varsayılan Admin Hesabı
+    mergedMap.set(DEFAULT_ACCOUNTS.DEMO.id, DEFAULT_ACCOUNTS.DEMO);
+
+    // 2. Yerel Cihaz Kullanıcıları
+    if (Array.isArray(localUsers)) {
       localUsers.forEach(u => {
-        const key = u.id || u.email;
+        const key = u.email ? u.email.toLowerCase() : u.id;
         if (key) mergedMap.set(key, u);
       });
-
-      // Buluttan gelen kullanıcıları ekle/güncelle
-      cloudUsers.forEach(u => {
-        const key = u.id || u.email;
-        if (key) mergedMap.set(key, u);
-      });
-
-      const mergedList = Array.from(mergedMap.values());
-      localStorage.setItem(USERS_REGISTRY_KEY, JSON.stringify(mergedList));
-      return mergedList;
     }
+
+    // 3. Buluttan Gelen Cihaz Kullanıcıları
+    if (Array.isArray(cloudUsers)) {
+      cloudUsers.forEach(u => {
+        const key = u.email ? u.email.toLowerCase() : u.id;
+        if (key) mergedMap.set(key, u);
+      });
+    }
+
+    const mergedList = Array.from(mergedMap.values());
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(USERS_REGISTRY_KEY, JSON.stringify(mergedList));
+    }
+
+    // Birleştirilmiş master listeyi Supabase bulutuna gönder (Tüm cihazların anında erişimi için)
+    if (navigator.onLine && mergedList.length > 0) {
+      await pushUsersToCloud(mergedList);
+    }
+
+    return mergedList;
   } catch (e) {
     console.error('[Auth] syncUsersFromCloud hatası:', e);
   }
@@ -60,7 +73,7 @@ export async function syncUsersFromCloud() {
 }
 
 /**
- * Kullanıcı listesini Supabase bulutuna anında yedekler (Cihazlar arası hesap senkronizasyonu için)
+ * Kullanıcı listesini Supabase bulutuna anında yedekler
  */
 export async function pushUsersToCloud(usersList) {
   try {
@@ -75,6 +88,7 @@ export async function pushUsersToCloud(usersList) {
  */
 export function getRegisteredUsers() {
   try {
+    if (typeof localStorage === 'undefined') return [DEFAULT_ACCOUNTS.DEMO];
     const raw = localStorage.getItem(USERS_REGISTRY_KEY);
     if (!raw) {
       const initialUsers = [DEFAULT_ACCOUNTS.DEMO];
@@ -147,14 +161,9 @@ export async function login(emailOrUsername, password) {
     return { success: true, user: adminUser };
   }
 
-  let users = getRegisteredUsers();
+  // Önce buluttan güncel kullanıcı listesini çek (Tüm PC ve Mobil hesapların erişilebilirliği için)
+  let users = await syncUsersFromCloud();
   let foundUser = _findUser(users, cleanInput, cleanPassword);
-
-  // Yerel veride bulunamadıysa Supabase bulutundan kullanıcı kaydını güncelleip tekrar dene (Çoklu Cihaz Desteği)
-  if (!foundUser && navigator.onLine) {
-    users = await syncUsersFromCloud();
-    foundUser = _findUser(users, cleanInput, cleanPassword);
-  }
 
   if (!foundUser) {
     return { success: false, message: 'Giriş bilgileri hatalı veya hesabınıza ulaşılamadı. Lütfen e-posta ve şifrenizi kontrol edin.' };
@@ -233,7 +242,7 @@ export async function registerUser({ farmName, ownerName, email, password, role 
     console.error('[Auth] Error saving new user:', e);
   }
 
-  // Kullanıcı listesini Supabase bulutuna gönder (PC ve Mobil senkronizasyonu için)
+  // Kullanıcı listesini Supabase bulutuna anında gönder
   await pushUsersToCloud(users);
 
   // Yeni kiracı için boş state oluştur ve aktif oturumu ayarla
