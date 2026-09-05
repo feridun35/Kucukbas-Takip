@@ -5,7 +5,7 @@
 
 import { loadTenantState, clearTenantState, initNewTenantState } from './state.js';
 import { navigateTo } from './router.js';
-import { pushLocalStateToCloud, pullCloudStateToLocal } from './syncManager.js';
+import { pushLocalStateToCloud, pullCloudStateToLocal, pushStateToCloudImmediate } from './syncManager.js';
 
 // Admin / Demo Varsayılan Hesabı (10 Hayvanlı Örnek Çiftlik)
 export const DEFAULT_ACCOUNTS = {
@@ -60,11 +60,11 @@ export async function syncUsersFromCloud() {
 }
 
 /**
- * Kullanıcı listesini Supabase bulutuna yedekler (Cihazlar arası hesap senkronizasyonu için)
+ * Kullanıcı listesini Supabase bulutuna anında yedekler (Cihazlar arası hesap senkronizasyonu için)
  */
-export function pushUsersToCloud(usersList) {
+export async function pushUsersToCloud(usersList) {
   try {
-    pushLocalStateToCloud(GLOBAL_USERS_SYNC_KEY, usersList, 300);
+    await pushStateToCloudImmediate(GLOBAL_USERS_SYNC_KEY, usersList);
   } catch (e) {
     console.error('[Auth] pushUsersToCloud hatası:', e);
   }
@@ -234,7 +234,7 @@ export async function registerUser({ farmName, ownerName, email, password, role 
   }
 
   // Kullanıcı listesini Supabase bulutuna gönder (PC ve Mobil senkronizasyonu için)
-  pushUsersToCloud(users);
+  await pushUsersToCloud(users);
 
   // Yeni kiracı için boş state oluştur ve aktif oturumu ayarla
   _setCurrentUser(newUser);

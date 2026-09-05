@@ -73,7 +73,7 @@ function _renderLoginForm() {
         </label>
         <div style="position:relative;">
           <span style="position:absolute; left:14px; top:50%; transform:translateY(-50%); font-size:1.1rem; opacity:0.6;">👤</span>
-          <input type="text" id="login-email" placeholder="admin veya e-posta adresiniz" value="admin"
+          <input type="text" id="login-email" placeholder="admin veya e-posta adresiniz"
                  style="width:100%; box-sizing:border-box; padding:14px 14px 14px 44px; border-radius:14px; background:rgba(255,255,255,0.06); border:1px solid var(--glass-border); color:var(--text-primary); font-size:1rem; font-family:inherit; outline:none; transition:border-color 0.2s;">
         </div>
       </div>
@@ -84,7 +84,7 @@ function _renderLoginForm() {
         </label>
         <div style="position:relative;">
           <span style="position:absolute; left:14px; top:50%; transform:translateY(-50%); font-size:1.1rem; opacity:0.6;">🔒</span>
-          <input type="password" id="login-password" placeholder="••••••••" value="admin"
+          <input type="password" id="login-password" placeholder="••••••••"
                  style="width:100%; box-sizing:border-box; padding:14px 14px 14px 44px; border-radius:14px; background:rgba(255,255,255,0.06); border:1px solid var(--glass-border); color:var(--text-primary); font-size:1rem; font-family:inherit; outline:none; transition:border-color 0.2s;">
         </div>
       </div>
