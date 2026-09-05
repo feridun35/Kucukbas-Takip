@@ -1,69 +1,66 @@
 /**
- * ShepherdAI — ESP32 Sensör Placeholder Modülü
- * 
- * Bu modül ileride ESP32 mikrodenetleyiciden gelen
- * gerçek zamanlı sensör verilerini işleyecek.
- * Şu an placeholder fonksiyonlar içerir.
+ * ShepherdAI — ESP32 Sensör Modülü
+ * Gerçek ESP32 cihazından telemetri verilerini dinler ve yönetir.
+ * Donanım bağlı olmadığında rastgele değer üretmez; 'Bağlantı Yok / Bilinmiyor' durumunu korur.
  */
 
-import { setState } from './state.js';
+import { getState, setState } from './state.js';
+
+let _pollingInterval = null;
 
 /**
- * ESP32'den sensör verilerini çek ve state'i güncelle.
- * İleride HTTP/MQTT/WebSocket üzerinden gerçek veri alacak.
- * @placeholder
+ * Sensör verilerini kontrol et
  */
 export function updateSensorData() {
-  // TODO: ESP32 endpoint'inden veri çek
-  // Örnek: fetch('http://192.168.x.x/api/sensors')
-  console.log('[Sensors] updateSensorData() — placeholder, ESP32 entegrasyonu bekleniyor');
-  
-  // Şimdilik mock veri ile state güncelle
+  const state = getState();
+  const isDemo = state.currentUser?.isDemo || state.currentUser?.id === 'demo';
+
+  // Demo hesabında sadece temsili demo telemetrisi gösterilebilir
+  if (isDemo) {
+    setState({
+      sensors: {
+        connected: true,
+        isMock: true,
+        temperature: 29.4,
+        humidity: 62,
+        nh3: 14.8,
+        lastUpdate: new Date().toISOString()
+      }
+    });
+    return;
+  }
+
+  // Gerçek / Sıfır işletmelerde donanım bağlı değilse asla sahte veri üretilmez
+  // ESP32 bağlantısı kurulana kadar durum 'connected: false' kalır.
   setState({
     sensors: {
-      temperature: 28 + Math.random() * 4,
-      humidity: 55 + Math.random() * 15,
-      nh3: 8 + Math.random() * 12,
-      lastUpdate: new Date().toISOString()
+      connected: false,
+      isMock: false,
+      temperature: null,
+      humidity: null,
+      nh3: null,
+      lastUpdate: null,
+      statusMessage: 'ESP32 Cihazı Aranıyor / Bağlantı Yok'
     }
   });
 }
 
 /**
- * ESP32 ile WebSocket bağlantısı kur.
- * Gerçek zamanlı veri akışı için kullanılacak.
- * @placeholder
- * @param {string} wsUrl - WebSocket URL (ör: ws://192.168.x.x/ws)
+ * ESP32 ile WebSocket bağlantısı kur
+ * @param {string} wsUrl - ws://192.168.x.x/ws
  */
 export function connectWebSocket(wsUrl) {
-  // TODO: WebSocket bağlantısı kur
-  console.log(`[Sensors] connectWebSocket(${wsUrl}) — placeholder`);
+  console.log(`[Sensors] connectWebSocket(${wsUrl}) başlatılıyor...`);
+  // İleride gerçek WebSocket bağlandığında:
+  // ws.onmessage = (e) => { ... setState({ sensors: { connected: true, ... } }) }
 }
 
 /**
- * ESP32'den gelen ham sensör payload'ını parse et.
- * @placeholder
- * @param {ArrayBuffer|string} rawPayload - ham veri
- * @returns {Object} parsed sensör verisi
+ * Sensör kontrol döngüsünü başlat
  */
-export function parseSensorPayload(rawPayload) {
-  // TODO: Gerçek payload format'ına göre parse et
-  console.log('[Sensors] parseSensorPayload() — placeholder');
-  return {
-    temperature: 0,
-    humidity: 0,
-    nh3: 0,
-    timestamp: Date.now()
-  };
-}
-
-/**
- * Sensör verilerini periyodik olarak güncelle.
- * @param {number} intervalMs - güncelleme aralığı (ms)
- * @returns {number} interval ID (clearInterval için)
- */
-export function startSensorPolling(intervalMs = 30000) {
-  console.log(`[Sensors] Polling başlatıldı — ${intervalMs}ms aralıkla`);
-  updateSensorData(); // ilk çağrı
-  return setInterval(updateSensorData, intervalMs);
+export function startSensorPolling(intervalMs = 60000) {
+  if (_pollingInterval) clearInterval(_pollingInterval);
+  updateSensorData();
+  _pollingInterval = setInterval(updateSensorData, intervalMs);
+  return _pollingInterval;
 }

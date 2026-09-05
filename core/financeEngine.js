@@ -14,7 +14,15 @@ import { marketPrices } from '../data/mock-data.js';
 export function calculateAnimalROI(animalId) {
   if (animalId === 'HERD') {
     const animals = getState().animals || [];
-    if (animals.length === 0) return null;
+    if (animals.length === 0) {
+      return {
+        netValue: 0,
+        totalCost: 0,
+        profitLoss: 0,
+        roiPercentage: '0.00',
+        sparklineData: [0, 0, 0, 0, 0, 0, 0]
+      };
+    }
 
     let totalRevenue = 0;
     let totalCost = 0;

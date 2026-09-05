@@ -5,6 +5,7 @@
 
 import { getState, setState } from '../core/state.js';
 import { showAlert, showFormModal } from '../core/modal.js';
+import { getAnimalWithdrawalStatus } from '../core/healthManager.js';
 
 let _container = null;
 let _searchTerm = '';
@@ -27,6 +28,7 @@ export function init() {
 
 function _renderContent() {
   const animals = getState().animals || [];
+  const totalAnimalsInHerd = animals.length;
   
   // 1) Filtreleme
   let filtered = animals.filter(a => {
@@ -45,6 +47,10 @@ function _renderContent() {
       if (_activeFilter === 'Besi' && a.group !== 'Besi') return false;
       if (_activeFilter === 'Sağmal' && a.group !== 'Sağmal') return false;
       if (_activeFilter === 'Kuzu/Oğlak' && a.type !== 'Kuzu' && a.type !== 'Oğlak') return false;
+      if (_activeFilter === 'Karantinadaki') {
+        const ws = getAnimalWithdrawalStatus(a.id);
+        if (!ws.hasActiveWithdrawal) return false;
+      }
     }
     return true;
   });
@@ -63,12 +69,12 @@ function _renderContent() {
       <div class="search-box" style="margin-bottom:12px; position:relative;">
         <span style="position:absolute; left:12px; top:50%; transform:translateY(-50%); opacity:0.5;">🔍</span>
         <input type="text" id="search-animal" value="${_searchTerm}" placeholder="Küpe No veya RFID Ara..." 
-               style="width:100%; padding:12px 12px 12px 36px; border-radius:12px; background:var(--glass-bg); border:1px solid var(--glass-border); color:var(--text-primary); font-family:inherit;">
+               style="width:100%; box-sizing:border-box; padding:12px 12px 12px 36px; border-radius:12px; background:var(--glass-bg); border:1px solid var(--glass-border); color:var(--text-primary); font-family:inherit;">
       </div>
 
       <!-- Filtre Chipleri -->
       <div class="filter-scroll" style="display:flex; gap:8px; overflow-x:auto; padding-bottom:8px; scrollbar-width:none;">
-        ${['Tümü', 'Sağlıklı', 'Riskli', 'Gebe', 'Sağmal', 'Besi', 'Kuzu/Oğlak'].map(f => `
+        ${['Tümü', 'Sağlıklı', 'Riskli', 'Gebe', 'Sağmal', 'Besi', 'Kuzu/Oğlak', 'Karantinadaki'].map(f => `
           <button class="filter-chip ${f === _activeFilter ? 'active' : ''}" data-filter="${f}" 
                   style="white-space:nowrap; padding:6px 16px; border-radius:20px; font-size:0.85rem; font-weight:600; 
                          background:${f === _activeFilter ? 'var(--accent-blue)' : 'var(--glass-bg)'}; 
@@ -80,9 +86,24 @@ function _renderContent() {
       </div>
     </div>
 
+    <!-- Hayvan Listesi veya Boş Durum Placeholder'ı -->
     <div class="herd-list-grid" style="padding-bottom:var(--space-md); display:grid; gap:12px;">
-      ${displayed.map(a => _renderAnimalCard(a)).join('')}
-      ${displayed.length === 0 ? '<div style="text-align:center; color:var(--text-muted); padding:40px 0;">Hayvan bulunamadı.</div>' : ''}
+      ${totalAnimalsInHerd === 0 ? `
+        <div class="glass-card empty-herd-placeholder" style="text-align:center; padding:48px 20px; border-radius:24px; border:1px dashed rgba(255,255,255,0.18); background:rgba(255,255,255,0.02); margin:12px 0;">
+          <div style="font-size:3.5rem; margin-bottom:14px; animation:bounce 2s infinite ease-in-out;">🐑</div>
+          <h3 style="font-size:1.15rem; font-weight:700; color:var(--text-primary); margin-bottom:8px;">
+            Henüz kayıtlı hayvan bulunmuyor. İlk hayvanınızı ekleyin
+          </h3>
+          <p style="font-size:0.85rem; color:var(--text-secondary); margin-bottom:24px; max-width:320px; margin-left:auto; margin-right:auto; line-height:1.5;">
+            Sürünüzü yönetmeye başlamak ve yapay zeka analizlerini aktive etmek için ilk kaydınızı oluşturun.
+          </p>
+          <button id="btn-empty-add-animal" class="btn-primary" style="padding:14px 28px; border-radius:18px; font-weight:700; font-size:1rem; box-shadow:0 4px 20px rgba(34,197,94,0.35); cursor:pointer;">
+            ➕ İlk Hayvanınızı Ekleyin
+          </button>
+        </div>
+      ` : displayed.length === 0 ? `
+        <div style="text-align:center; color:var(--text-muted); padding:40px 0;">Arama kriterlerine uygun hayvan bulunamadı.</div>
+      ` : displayed.map(a => _renderAnimalCard(a)).join('')}
     </div>
 
     ${totalFiltered > _loadedCount ? `
@@ -91,12 +112,14 @@ function _renderContent() {
       </div>
     ` : '<div style="height:30px;"></div>'}
 
-    <!-- Yeni Hayvan Butonu -->
-    <div class="bottom-action-container" style="position:relative !important; margin-top:var(--space-md); margin-bottom:calc(var(--nav-height) + var(--space-xl)); width:calc(100% - var(--space-lg)*2);">
-      <button class="huge-btn btn-primary" id="btn-add-animal" style="width:100%; border-radius:24px; padding:16px; font-size:1.1rem; box-shadow:0 4px 16px rgba(59,130,246,0.3);">
-        <span class="btn-icon">➕</span> Yeni Hayvan Ekle
-      </button>
-    </div>
+    <!-- Yeni Hayvan Butonu (Sadece hayvan varsa veya alt buton olarak) -->
+    ${totalAnimalsInHerd > 0 ? `
+      <div class="bottom-action-container" style="position:relative !important; margin-top:var(--space-md); margin-bottom:calc(var(--nav-height) + var(--space-xl)); width:calc(100% - var(--space-lg)*2);">
+        <button class="huge-btn btn-primary" id="btn-add-animal" style="width:100%; border-radius:24px; padding:16px; font-size:1.1rem; box-shadow:0 4px 16px rgba(59,130,246,0.3);">
+          <span class="btn-icon">➕</span> Yeni Hayvan Ekle
+        </button>
+      </div>
+    ` : ''}
   `;
   
   _attachEvents();
@@ -110,18 +133,24 @@ function _renderAnimalCard(animal) {
   if (animal.status === 'danger') { statusColor = 'var(--accent-red)'; statusIcon = '🛑'; }
   if (animal.status === 'good') { statusColor = 'var(--accent-green)'; }
 
+  // Karantina kontrolu
+  const ws = getAnimalWithdrawalStatus(animal.id);
+  const quarantineBadge = ws.hasActiveWithdrawal
+    ? `<span style="font-size:0.6rem; background:rgba(239,68,68,0.15); color:var(--danger-red); padding:1px 6px; border-radius:6px; font-weight:600; margin-left:6px;">⚕️ ${ws.meatDaysLeft > 0 ? ws.meatDaysLeft + 'g' : ''}</span>`
+    : '';
+
   return `
     <div class="glass-card animal-list-card" data-id="${animal.id}" style="padding:12px; display:flex; align-items:center; gap:12px; cursor:pointer;">
       <div class="a-avatar" style="width:48px; height:48px; border-radius:30%; background:var(--bg-primary); display:flex; align-items:center; justify-content:center; font-size:1.5rem; border:2px solid ${statusColor};">
         ${animal.type === 'Keçi' || animal.type === 'Oğlak' || animal.type === 'Teke' ? '🐐' : '🐑'}
       </div>
       <div class="a-info" style="flex:1; min-width:0;">
-        <div style="font-weight:700; font-size:1rem; color:var(--text-primary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${animal.id}</div>
+        <div style="font-weight:700; font-size:1rem; color:var(--text-primary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${animal.id}${quarantineBadge}</div>
         <div style="font-size:0.75rem; color:var(--text-secondary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${animal.breed} &bull; ${animal.group}</div>
       </div>
       <div class="a-metrics" style="text-align:right; flex-shrink:0;">
-        <div style="font-size:0.9rem; font-weight:700; white-space:nowrap;">${animal.weight} kg</div>
-        <div style="font-size:0.75rem; color:${statusColor}; white-space:nowrap;">${statusIcon} Skor: ${animal.yieldScore}</div>
+        <div style="font-size:0.9rem; font-weight:700; white-space:nowrap;">${animal.weight !== 'Bilinmiyor' && animal.weight > 0 ? animal.weight + ' kg' : '-'}</div>
+        <div style="font-size:0.75rem; color:${statusColor}; white-space:nowrap;">${statusIcon} Skor: ${animal.yieldScore || '-'}</div>
       </div>
     </div>
   `;
@@ -147,9 +176,6 @@ function _attachEvents() {
   _container.querySelectorAll('.animal-list-card').forEach(card => {
     card.addEventListener('click', (e) => {
       const animalId = e.currentTarget.dataset.id;
-      // Normalde URL parametresi veya state üzerinden ID aktarılır.
-      // Şimdilik state'e activeAnimalId yazıp profile'a yönlendirelim:
-      const state = getState();
       setState({ activeAnimalId: animalId });
       import('../core/router.js').then(module => {
         module.navigateTo('animal-profile');
@@ -173,68 +199,68 @@ function _attachEvents() {
     });
   }
 
-  const addBtn = _container.querySelector('#btn-add-animal');
-  if (addBtn) {
-    addBtn.addEventListener('click', async () => {
-      const state = getState();
-      const femaleOpts = ['Bilinmiyor', ...(state.animals || []).filter(a => a.gender === 'Dişi').map(a => a.id)];
-      const maleOpts = ['Bilinmiyor', ...(state.animals || []).filter(a => a.gender === 'Erkek').map(a => a.id)];
+  // Hayvan Ekleme Akışı Fonksiyonu
+  const openAddAnimalModal = async () => {
+    const state = getState();
+    const femaleOpts = ['Bilinmiyor', ...(state.animals || []).filter(a => a.gender === 'Dişi').map(a => a.id)];
+    const maleOpts = ['Bilinmiyor', ...(state.animals || []).filter(a => a.gender === 'Erkek').map(a => a.id)];
 
-      const result = await showFormModal('Yeni Hayvan', [
-        { id: 'id', label: 'Küpe No (RFID ile tarayabilirsiniz)', type: 'text', placeholder: 'Örn: TR-500' },
-        { id: 'breed', label: 'Irk', type: 'select', options: ['Merinos', 'Kıvırcık', 'İvesi', 'Saanen', 'Karakaya'] },
-        { id: 'gender', label: 'Cinsiyet', type: 'select', options: ['Dişi', 'Erkek'] },
-        { id: 'group', label: 'Grup', type: 'select', options: ['Besi', 'Sağmal', 'Gebe', 'Boş', 'Damızlık'] },
-        { id: 'weight', label: 'Güncel Ağırlık (kg)', type: 'number', placeholder: 'Örn: 45' },
-        { id: 'ageMonths', label: 'Yaş (ay olarak)', type: 'number', placeholder: 'Örn: 18' },
-        { id: 'mother', label: 'Ana Küpe No', type: 'select', options: femaleOpts },
-        { id: 'father', label: 'Baba Küpe No', type: 'select', options: maleOpts }
-      ], '🐑');
+    const result = await showFormModal('Yeni Hayvan Kaydı', [
+      { id: 'id', label: 'Küpe No (RFID ile tarayabilirsiniz)', type: 'text', placeholder: 'Örn: TR-500' },
+      { id: 'breed', label: 'Irk', type: 'select', options: ['Merinos', 'Kıvırcık', 'İvesi', 'Saanen', 'Karakaya'] },
+      { id: 'gender', label: 'Cinsiyet', type: 'select', options: ['Dişi', 'Erkek'] },
+      { id: 'group', label: 'Grup', type: 'select', options: ['Besi', 'Sağmal', 'Gebe', 'Boş', 'Damızlık'] },
+      { id: 'weight', label: 'Güncel Ağırlık (kg)', type: 'number', placeholder: 'Örn: 45' },
+      { id: 'ageMonths', label: 'Yaş (ay olarak)', type: 'number', placeholder: 'Örn: 18' },
+      { id: 'mother', label: 'Ana Küpe No', type: 'select', options: femaleOpts },
+      { id: 'father', label: 'Baba Küpe No', type: 'select', options: maleOpts }
+    ], '🐑');
 
-      if (result && result.id) {
-        // Gruba göre verim odağı otomatik belirle
-        const groupToFocus = { 'Sağmal': 'milk', 'Gebe': 'breed', 'Damızlık': 'breed', 'Besi': 'meat', 'Boş': 'meat' };
+    if (result && result.id && result.id.trim() !== '') {
+      const groupToFocus = { 'Sağmal': 'milk', 'Gebe': 'breed', 'Damızlık': 'breed', 'Besi': 'meat', 'Boş': 'meat' };
 
-        // Yaştan doğum tarihi hesapla
-        const ageInput = result.ageMonths;
-        let birthDateStr = 'Bilinmiyor';
-        if (ageInput && ageInput.trim() !== '') {
-          const ageMonths = parseInt(ageInput) || 18;
-          const birthDate = new Date();
-          birthDate.setMonth(birthDate.getMonth() - ageMonths);
-          birthDateStr = birthDate.toISOString().split('T')[0];
-        }
-
-        const weightInput = result.weight;
-        const finalWeight = (weightInput && weightInput.trim() !== '') ? parseFloat(weightInput) : 'Bilinmiyor';
-
-        const newAnimal = {
-          id: result.id,
-          rfid: 'RFID-' + Math.floor(Math.random() * 90000 + 10000),
-          breed: result.breed,
-          gender: result.gender,
-          type: result.breed === 'Saanen' ? (result.gender==='Dişi'?'Keçi':'Teke') : (result.gender==='Dişi'?'Koyun':'Koç'),
-          group: result.group,
-          weight: finalWeight,
-          bcs: 3,
-          status: 'good',
-          yieldScore: 80,
-          lastVaccine: '-',
-          focus: groupToFocus[result.group] || 'meat',
-          birthDate: birthDateStr,
-          mother: result.mother || 'Bilinmiyor',
-          father: result.father || 'Bilinmiyor'
-        };
-
-        const currentAnimals = getState().animals;
-        currentAnimals.unshift(newAnimal); // Add to top
-        setState({ animals: currentAnimals });
-
-        await showAlert('Başarılı', `${newAnimal.id} başarıyla sürüye eklendi.`, '✅');
-        
-        // Yeniden renderla
-        _renderContent();
+      const ageInput = result.ageMonths;
+      let birthDateStr = 'Bilinmiyor';
+      if (ageInput && ageInput.trim() !== '') {
+        const ageMonths = parseInt(ageInput) || 18;
+        const birthDate = new Date();
+        birthDate.setMonth(birthDate.getMonth() - ageMonths);
+        birthDateStr = birthDate.toISOString().split('T')[0];
       }
-    });
-  }
+
+      const weightInput = result.weight;
+      const finalWeight = (weightInput && weightInput.trim() !== '') ? parseFloat(weightInput) : 0;
+
+      const newAnimal = {
+        id: result.id.trim(),
+        rfid: 'RFID-' + Math.floor(Math.random() * 90000 + 10000),
+        breed: result.breed || 'Merinos',
+        gender: result.gender || 'Dişi',
+        type: result.breed === 'Saanen' ? (result.gender === 'Dişi' ? 'Keçi' : 'Teke') : (result.gender === 'Dişi' ? 'Koyun' : 'Koç'),
+        group: result.group || 'Besi',
+        weight: finalWeight,
+        bcs: 3,
+        status: 'good',
+        yieldScore: 85,
+        lastVaccine: '-',
+        focus: groupToFocus[result.group] || 'meat',
+        birthDate: birthDateStr,
+        mother: result.mother || 'Bilinmiyor',
+        father: result.father || 'Bilinmiyor'
+      };
+
+      const currentAnimals = [...(getState().animals || [])];
+      currentAnimals.unshift(newAnimal);
+      setState({ animals: currentAnimals, activeAnimalId: newAnimal.id });
+
+      await showAlert('Başarılı', `${newAnimal.id} başarıyla sürüye eklendi.`, '✅');
+      _renderContent();
+    }
+  };
+
+  const addBtn = _container.querySelector('#btn-add-animal');
+  if (addBtn) addBtn.addEventListener('click', openAddAnimalModal);
+
+  const emptyAddBtn = _container.querySelector('#btn-empty-add-animal');
+  if (emptyAddBtn) emptyAddBtn.addEventListener('click', openAddAnimalModal);
 }

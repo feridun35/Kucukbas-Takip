@@ -2,13 +2,17 @@
  * ShepherdAI — Hayvan Profili ve Genetik Pasaport Modülü (Tabbed Structure)
  */
 
-import { animalData, breedingMockRam } from '../data/mock-data.js';
+import { animalData } from '../data/mock-data.js';
 import { getState, getAnimalById, setState } from '../core/state.js';
-import { showAlert, showPrompt, showConfirm, showSelect } from '../core/modal.js';
+import { showAlert, showPrompt, showConfirm, showSelect, showFormModal } from '../core/modal.js';
 import { navigateTo } from '../core/router.js';
-import { checkInbreeding, calculateCompatibility, calculateBirthDate } from '../core/breedingManager.js';
+import { calculateCompatibility, calculateBirthDate, checkInbreedingRisk, recordBirth } from '../core/breedingManager.js';
+import { parseDate } from '../core/herdMathEngine.js';
 import { calculateAnimalROI } from '../core/financeEngine.js';
 import { getTasksForUser, getTaskHistory, addTask, completeTask, TASK_TYPES } from '../core/workforceManager.js';
+import { getAnimalWithdrawalStatus } from '../core/healthManager.js';
+import { openTreatmentModal } from './treatment-modal.js';
+import { openBreedingModal } from './breeding-modal.js';
 
 let _container = null;
 let _activeTab = 'info'; // 'info', 'passport', 'breeding', 'health', 'finance', 'tasks'
@@ -20,8 +24,31 @@ export function render() {
   _container.style.paddingBottom = '180px';
   
   const state = getState();
-  const activeId = state.activeAnimalId || (state.animals && state.animals.length > 0 ? state.animals[0].id : null);
-  const rawAnimal = getAnimalById(activeId) || {};
+  const animals = state.animals || [];
+
+  if (animals.length === 0) {
+    _container.innerHTML = `
+      <div class="animal-header" style="justify-content:center; text-align:center;">
+        <h2 style="font-size:1.3rem; font-weight:700;">Hayvan Pasaportu</h2>
+      </div>
+      <div class="glass-card" style="text-align:center; padding:48px 24px; border-radius:24px; border:1px dashed rgba(255,255,255,0.18); background:rgba(255,255,255,0.02); margin:20px 0;">
+        <div style="font-size:3.5rem; margin-bottom:14px;">🐑</div>
+        <h3 style="font-size:1.15rem; font-weight:700; color:var(--text-primary); margin-bottom:8px;">
+          Henüz kayıtlı hayvan bulunmuyor. İlk hayvanınızı ekleyin
+        </h3>
+        <p style="font-size:0.85rem; color:var(--text-secondary); margin-bottom:24px; max-width:300px; margin-left:auto; margin-right:auto; line-height:1.5;">
+          Bireysel sağlık, verim ve soyağacı pasaportunu görüntülemek için önce sürüye bir hayvan ekleyin.
+        </p>
+        <button id="btn-empty-goto-herd" class="btn-primary" style="padding:14px 28px; border-radius:18px; font-weight:700; font-size:1rem; box-shadow:0 4px 20px rgba(34,197,94,0.35); cursor:pointer;">
+          📋 Sürü Listesine Git & Ekle
+        </button>
+      </div>
+    `;
+    return _container;
+  }
+
+  const activeId = state.activeAnimalId || (animals.length > 0 ? animals[0].id : null);
+  const rawAnimal = getAnimalById(activeId) || animals[0] || {};
   
   const currentAnimal = {
     tagID: rawAnimal.id || animalData.tagID,
@@ -36,8 +63,8 @@ export function render() {
     geneticsScore: rawAnimal.yieldScore || animalData.geneticsScore,
     focus: rawAnimal.focus || 'meat',
     lineage: {
-      mother: rawAnimal.mother || (rawAnimal.lineage && rawAnimal.lineage.mother) || (animalData.lineage && animalData.lineage.mother) || null,
-      father: rawAnimal.father || (rawAnimal.lineage && rawAnimal.lineage.father) || (animalData.lineage && animalData.lineage.father) || null
+      mother: rawAnimal.mother !== undefined ? rawAnimal.mother : (rawAnimal.lineage?.mother || 'Bilinmiyor'),
+      father: rawAnimal.father !== undefined ? rawAnimal.father : (rawAnimal.lineage?.father || 'Bilinmiyor')
     },
     genetics: rawAnimal.genetics || animalData.genetics || { meat: 80, milk: 50, fertility: 75, resistance: 90, growth: 85 },
     gender: rawAnimal.gender || animalData.gender || 'Dişi',
@@ -109,6 +136,13 @@ export function render() {
 
 export function init() {
   if (!_container) return;
+
+  const emptyGotoHerdBtn = _container.querySelector('#btn-empty-goto-herd');
+  if (emptyGotoHerdBtn) {
+    emptyGotoHerdBtn.addEventListener('click', () => {
+      navigateTo('herd-list');
+    });
+  }
 
   const backBtn = _container.querySelector('#btn-back');
   if (backBtn) {
@@ -229,7 +263,7 @@ function _initInfoTab() {
 
   const bcsInput = _container.querySelector('#bcs-input');
   const bcsDisplay = _container.querySelector('#bcs-display');
-  if(bcsInput && bcsDisplay) {
+  if (bcsInput && bcsDisplay) {
     bcsInput.addEventListener('input', (e) => {
       bcsDisplay.textContent = e.target.value;
       const val = parseFloat(e.target.value);
@@ -241,17 +275,36 @@ function _initInfoTab() {
         bcsDisplay.style.background = 'var(--accent-cyan-glow)';
       }
     });
+
+    bcsInput.addEventListener('change', (e) => {
+      const state = getState();
+      const animals = [...(state.animals || [])];
+      const activeId = state.activeAnimalId || (animals.length > 0 ? animals[0].id : null);
+      const idx = animals.findIndex(a => a.id === activeId);
+      if (idx > -1) {
+        animals[idx] = { ...animals[idx], bcs: parseFloat(e.target.value) };
+        setState({ animals });
+      }
+    });
   }
 
   const btnWeight = _container.querySelector('#btn-update-weight');
-  const dispWeight = _container.querySelector('#disp-weight');
   if (btnWeight) {
     btnWeight.addEventListener('click', async () => {
-      const currentVal = dispWeight ? dispWeight.innerText : '';
-      const newWeight = await showPrompt('Ağırlık Güncelle', `Mevcut Ağırlık: ${currentVal}\nYeni ağırlığı giriniz:`, 'number', '⚖️');
-      if (newWeight && !isNaN(newWeight)) {
-        if(dispWeight) dispWeight.innerText = newWeight + ' kg';
-        showAlert('Başarılı', `Ağırlık kaydedildi.\nGünlük canlı ağırlık artışı (GCAA) hesaplandı.`, '✅');
+      const state = getState();
+      const animals = [...(state.animals || [])];
+      const activeId = state.activeAnimalId || (animals.length > 0 ? animals[0].id : null);
+      const idx = animals.findIndex(a => a.id === activeId);
+      if (idx === -1) return;
+
+      const currentVal = animals[idx].weight || '';
+      const newWeight = await showPrompt('Ağırlık Güncelle', `Mevcut Ağırlık: ${currentVal} kg\nYeni ağırlığı giriniz (kg):`, 'number', '⚖️');
+      if (newWeight && !isNaN(parseFloat(newWeight))) {
+        const parsedW = parseFloat(newWeight);
+        animals[idx] = { ...animals[idx], weight: parsedW };
+        setState({ animals });
+        await showAlert('Başarılı', `${animals[idx].id} için yeni ağırlık (${parsedW} kg) sisteme kaydedildi.`, '✅');
+        _rerender();
       }
     });
   }
@@ -300,168 +353,204 @@ function _initPassportTab() {
 // Tab: BREEDING (Islah & Eşleşme)
 // ═══════════════════════════════════════
 function _renderBreedingTab(animal, focusMode) {
-  const inbreedingResult = checkInbreeding(animal.tagID, breedingMockRam.tagID);
-  const compatibilityScore = calculateCompatibility(animal.tagID, breedingMockRam.tagID, focusMode);
-  
-  const matingDateMock = new Date();
-  matingDateMock.setDate(matingDateMock.getDate() - 138); 
-  const pregData = calculateBirthDate(matingDateMock);
+  const state = getState();
+  const records = state.breedingRecords || [];
+  const tagId = animal.tagID;
 
-  const isMating = _breedingViewMode === 'mating';
+  // Bu hayvanla ilgili aktif kayıt var mı?
+  const activeRecord = records.find(r =>
+    (r.status === 'ACTIVE' || r.status === 'PREGNANT') && r.damIds.includes(tagId)
+  );
 
-  const modeHtml = `
-    <div style="display:flex; justify-content:center; margin-bottom:var(--space-md);">
-      <button id="btn-mode-toggle" class="btn-secondary" style="font-size:0.75rem; padding:6px 16px; border-radius:12px;">
-        Gösterim: ${isMating ? '🟠 Potansiyel Eşleşme Matrisi' : '🟣 Gebelik Takvimi'}
-      </button>
-    </div>
-  `;
+  // Geçmiş kayıtlar
+  const pastRecords = records.filter(r =>
+    (r.status === 'COMPLETED' || r.status === 'FAILED') && r.damIds.includes(tagId)
+  );
 
-  let innerHtml = '';
-  if (isMating) {
-    innerHtml = `
-      ${inbreedingResult.hasRisk ? `
-        <div class="inbreeding-alert">
-          <strong>⚠️ YÜKSEK AKRABALIK RİSKİ!</strong>
-          <span>Ortak Ata: ${inbreedingResult.commonAncestors.join(', ')}</span>
-        </div>
+  if (!activeRecord) {
+    // Aktif eşleşme yok — eşleşme başlatma ekranı
+    return `
+      <div class="glass-card" style="text-align:center; padding:32px 20px; border:1px dashed rgba(249,115,22,0.3); border-radius:20px;">
+        <div style="font-size:3rem; margin-bottom:12px;">🐏</div>
+        <h3 style="font-size:1rem; font-weight:700; color:var(--text-primary); margin-bottom:6px;">Aktif Eşleşme Kaydı Yok</h3>
+        <p style="font-size:0.82rem; color:var(--text-secondary); margin-bottom:20px; line-height:1.5;">
+          Bu hayvan için aktif koç katımı veya gebelik kaydı bulunmuyor.<br/>
+          Yeni bir eşleşme kaydı oluşturmak için aşağıdaki butonu kullanın.
+        </p>
+        <button class="huge-btn btn-primary" id="btn-start-mating" style="width:100%; border-radius:20px; padding:14px; background:#f97316; box-shadow:0 4px 16px rgba(249,115,22,0.4); font-weight:700;">
+          <span class="btn-icon">🔗</span> Yeni Eşleşme Kaydı
+        </button>
+      </div>
+      ${pastRecords.length > 0 ? `
+        <div class="section-title" style="margin-top:var(--space-lg);"><span class="dot" style="background:#10b981"></span>Geçmiş Eşleşmeler</div>
+        ${_renderPastBreedingRecords(pastRecords)}
       ` : ''}
-
-      <div class="glass-card mating-card">
-        <div class="animals-vs">
-          <div class="mating-animal">
-            <span class="m-icon">🐑</span>
-            <span class="m-tag">${animal.tagID}</span>
-            <span class="m-role">Anaç</span>
-          </div>
-          <div class="mating-score-circle ${inbreedingResult.hasRisk ? 'risk' : 'safe'}">
-            <span class="s-val">%${compatibilityScore}</span>
-            <span class="s-lbl">Uyum Skoru</span>
-          </div>
-          <div class="mating-animal">
-            <span class="m-icon" style="filter: hue-rotate(45deg);">🐏</span>
-            <span class="m-tag">${breedingMockRam.tagID}</span>
-            <span class="m-role">Seçili Damızlık</span>
-          </div>
-        </div>
-      </div>
-
-      <div class="section-title" style="margin-top:var(--space-lg)"><span class="dot" style="background:var(--accent-orange)"></span>Genetik Radar</div>
-      <div class="glass-card radar-container">
-        ${_generateRadarChart(animal.genetics, breedingMockRam.genetics)}
-        <div class="radar-legend">
-          <div class="r-leg-item"><span class="r-color-box ewe-c"></span> ${animal.tagID}</div>
-          <div class="r-leg-item"><span class="r-color-box ram-c"></span> ${breedingMockRam.tagID}</div>
-        </div>
-      </div>
-      
-      <button class="huge-btn btn-primary" id="btn-record-mating" style="width:100%; margin-top:20px; border-radius:24px; padding:16px; background:#f97316; box-shadow:0 4px 16px rgba(249,115,22,0.4);">
-        <span class="btn-icon">🔗</span> Aşım Kaydet
-      </button>
-    `;
-  } else {
-    innerHtml = `
-      <div class="pregnancy-header">
-        <span class="preg-icon">🤰</span> Gebelik Durumu
-      </div>
-      <div class="glass-card pregnancy-card ${pregData.isCritical ? 'critical-glow' : 'safe-glow'}">
-        <div class="preg-title">Doğuma Kalan Tahmini Süre</div>
-        <div class="preg-countdown">
-          <span class="num">${pregData.daysLeft}</span>
-          <span class="lbl">GÜN</span>
-        </div>
-        <div class="preg-date">Beklenen: <strong>${pregData.expectedDate.toLocaleDateString('tr-TR', {day:'numeric', month:'long'})}</strong></div>
-        <div class="preg-progress-container" style="margin-top:16px;">
-          <div class="preg-progress-bar" style="width: ${((150 - pregData.daysLeft) / 150) * 100}%;"></div>
-        </div>
-      </div>
-      <button class="huge-btn btn-primary" id="btn-ultrasound" style="width:100%; margin-top:20px; border-radius:24px; padding:16px; background:#a855f7; box-shadow:0 4px 16px rgba(168,85,247,0.4);">
-        <span class="btn-icon">🩺</span> Ultrason Onayı
-      </button>
     `;
   }
 
-  return modeHtml + innerHtml;
+  // Aktif gebelik / koç katımı durumu
+  const pregInfo = calculateBirthDate(activeRecord.startDate);
+  const ms = activeRecord.milestones;
+  const sireLabel = activeRecord.sireIds.join(', ');
+
+  // Milestone timeline
+  const today = new Date();
+  const milestones = [
+    { label: 'Kızgınlık Kontrolü', date: ms.cycleCheckDate, icon: '🔴', day: 17 },
+    { label: 'Ultrason Muayenesi', date: ms.ultrasoundDate, icon: '🩺', day: 45 },
+    { label: 'İleri Gebelik Bakımı', date: ms.lateGestationDate, icon: '💉', day: 115 },
+    { label: 'Tahmini Doğum', date: ms.expectedBirthDate, icon: '🐣', day: 148 }
+  ];
+
+  const milestoneHtml = milestones.map(m => {
+    const msDate = new Date(m.date);
+    const isPast = msDate <= today;
+    const isToday = msDate.toDateString() === today.toDateString();
+    const diffDays = Math.round((msDate - today) / 86400000);
+    let statusClass = isPast ? 'done' : (diffDays <= 7 ? 'soon' : 'future');
+    if (isToday) statusClass = 'today';
+    return `
+      <div class="breeding-milestone ${statusClass}">
+        <div class="breeding-milestone-icon">${m.icon}</div>
+        <div class="breeding-milestone-info">
+          <div style="font-weight:600; font-size:0.82rem; color:var(--text-primary);">${m.label}</div>
+          <div style="font-size:0.72rem; color:var(--text-muted);">+${m.day}. gün • ${new Date(m.date).toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' })}</div>
+        </div>
+        <div style="font-size:0.7rem; font-weight:600; color:${isPast ? 'var(--accent-green)' : isToday ? '#fbbf24' : 'var(--text-muted)'};">
+          ${isPast ? '✅' : isToday ? '📍 BUGÜN' : `${diffDays} gün`}
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  return `
+    <div class="pregnancy-header">
+      <span class="preg-icon">🤰</span> Gebelik Durumu — Koç: ${sireLabel}
+    </div>
+
+    <div class="glass-card pregnancy-card ${pregInfo.isCritical ? 'critical-glow' : 'safe-glow'}">
+      <div class="preg-title">Doğuma Kalan Tahmini Süre</div>
+      <div class="preg-countdown">
+        <span class="num">${pregInfo.daysLeft}</span>
+        <span class="lbl">GÜN</span>
+      </div>
+      <div class="preg-date">Beklenen: <strong>${new Date(pregInfo.expectedDate).toLocaleDateString('tr-TR', {day:'numeric', month:'long'})}</strong></div>
+      <div class="preg-progress-container" style="margin-top:16px;">
+        <div class="preg-progress-bar" style="width: ${pregInfo.progressPercent}%;"></div>
+      </div>
+      <div style="display:flex; justify-content:space-between; font-size:0.7rem; color:var(--text-muted); margin-top:6px;">
+        <span>Aşım: ${new Date(activeRecord.startDate).toLocaleDateString('tr-TR', {day:'numeric', month:'short'})}</span>
+        <span>${pregInfo.daysElapsed}. gün / 148 gün</span>
+      </div>
+    </div>
+
+    <div class="section-title" style="margin-top:var(--space-lg);"><span class="dot" style="background:var(--accent-purple)"></span>Gebelik Takvimi</div>
+    <div class="glass-card" style="padding:var(--space-sm);">
+      ${milestoneHtml}
+    </div>
+
+    ${activeRecord.inbreedingWarning ? `
+      <div class="breeding-inbreeding-alert" style="background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.3); border-radius:12px; padding:12px; margin-top:var(--space-md);">
+        <div style="font-size:0.85rem; font-weight:700; color:#ef4444;">🚨 Akrabalık Uyarısı</div>
+        <div style="font-size:0.8rem; color:var(--text-secondary); margin-top:4px;">${activeRecord.inbreedingWarning}</div>
+      </div>
+    ` : ''}
+
+    ${pastRecords.length > 0 ? `
+      <div class="section-title" style="margin-top:var(--space-lg);"><span class="dot" style="background:#10b981"></span>Geçmiş Eşleşmeler</div>
+      ${_renderPastBreedingRecords(pastRecords)}
+    ` : ''}
+  `;
+}
+
+function _renderPastBreedingRecords(records) {
+  return records.map(r => {
+    const sireLabel = r.sireIds.join(', ');
+    const birthInfo = r.birthRecord ? `${r.birthRecord.type} doğum • ${r.birthRecord.lambCount} yavru` : 'Doğum kaydı yok';
+    return `
+      <div class="glass-card" style="padding:12px; margin-bottom:8px; border-left:3px solid #10b981;">
+        <div style="display:flex; justify-content:space-between; font-size:0.82rem;">
+          <span style="font-weight:600; color:var(--text-primary);">🐏 Koç: ${sireLabel}</span>
+          <span style="font-size:0.72rem; color:var(--text-muted);">${new Date(r.startDate).toLocaleDateString('tr-TR', {day:'numeric', month:'short', year:'numeric'})}</span>
+        </div>
+        <div style="font-size:0.75rem; color:var(--text-secondary); margin-top:4px;">🐣 ${birthInfo}</div>
+      </div>
+    `;
+  }).join('');
 }
 
 function _initBreedingTab() {
-  const btnToggle = _container.querySelector('#btn-mode-toggle');
-  if (btnToggle) {
-    btnToggle.addEventListener('click', () => {
-      _breedingViewMode = _breedingViewMode === 'mating' ? 'pregnant' : 'mating';
-      const parent = _container.parentNode;
-      const scrollPos = window.scrollY;
-      parent.innerHTML = '';
-      parent.appendChild(render());
-      init();
-      window.scrollTo(0, scrollPos);
-    });
-  }
-
-  const btnMate = _container.querySelector('#btn-record-mating');
-  if (btnMate) {
-    btnMate.addEventListener('click', async () => {
+  // Yeni eşleşme kaydı oluştur
+  const btnStartMating = _container.querySelector('#btn-start-mating');
+  if (btnStartMating) {
+    btnStartMating.addEventListener('click', async () => {
       const state = getState();
-      const animals = [...state.animals];
-      const activeId = state.activeAnimalId || (animals.length > 0 ? animals[0].id : null);
-      const idx = animals.findIndex(a => a.id === activeId);
-      
-      if (idx > -1) {
-        animals[idx] = { ...animals[idx], healthStatus: 'pregnant' };
-        setState({ animals });
-        _breedingViewMode = 'pregnant';
-        
-        // Re-render
-        const parent = _container.parentNode;
-        const scrollPos = window.scrollY;
-        parent.innerHTML = '';
-        parent.appendChild(render());
-        init();
-        window.scrollTo(0, scrollPos);
-        
-        showAlert('Başarılı', `Aşım kaydı alındı. ${animals[idx].tagID} artık Gebe (Pregnant) statüsünde takip edilecek.`, '✅');
+      const activeId = state.activeAnimalId || (state.animals && state.animals.length > 0 ? state.animals[0].id : null);
+      const result = await openBreedingModal(activeId);
+      if (result.saved) {
+        await showAlert('Eşleşme Kaydedildi! 🐏', 'Koç katımı ve gebelik takvimi oluşturuldu.', '✅');
+        _rerender();
       }
     });
   }
-
-  const btnUltrasound = _container.querySelector('#btn-ultrasound');
-  if (btnUltrasound) btnUltrasound.addEventListener('click', () => showAlert('Ultrason', '[SIM] Gebelik kesinleştirildi.', '🩺'));
 }
 
 // ═══════════════════════════════════════
 // Tab: HEALTH
 // ═══════════════════════════════════════
 function _renderHealthTab(animal) {
-  return `
-    <div class="section-title"><span class="dot" style="background:var(--danger-red)"></span>Bireysel Arınma Durumu</div>
-    <div class="glass-card withdrawal-card" style="margin-bottom:var(--space-2xl);">
+  // Tüm arınma hesaplaması core/healthManager.js üzerinden
+  const ws = getAnimalWithdrawalStatus(animal.tagID);
+
+  const withdrawalCardHtml = ws.hasActiveWithdrawal ? `
+    <div class="glass-card withdrawal-card" style="margin-bottom:var(--space-lg); border:1px solid rgba(239,68,68,0.3);">
       <div class="withdrawal-header">
         <span class="warning-icon">⛔</span>
-        <strong>SATIŞ / TÜKETİM YASAĞI</strong>
+        <strong>SATIŞ / TÜKETİM YASAĞI (Aktif İlaç)</strong>
       </div>
       <div class="withdrawal-body">
-        <p style="font-size:0.85rem; color:var(--text-secondary); margin-bottom:12px">Son ilaç: <strong>Oksitetrasiklin %20</strong></p>
+        <p style="font-size:0.85rem; color:var(--text-secondary); margin-bottom:12px">Son uygulanan ilaç: <strong>${ws.activeMedName || 'Kayıtlı İlaç'}</strong></p>
         <div class="withdrawal-grid">
           <div class="w-item">
-            <span class="w-label">Et Tüketimi İçin Kalan</span>
-            <span class="w-value red">14 GÜN</span>
+            <span class="w-label">🛑 Et Karantinası</span>
+            <span class="w-value ${ws.meatDaysLeft > 0 ? 'red' : 'green'}">${ws.meatDaysLeft > 0 ? ws.meatDaysLeft + ' GÜN KALDI' : 'GÜVENLİ'}</span>
           </div>
           <div class="w-item">
-            <span class="w-label">Süt Tüketimi İçin Kalan</span>
-            <span class="w-value red">0 GÜN</span>
+            <span class="w-label">🥛 Süt Karantinası</span>
+            <span class="w-value ${ws.milkDaysLeft > 0 ? 'red' : 'green'}">${ws.milkDaysLeft > 0 ? ws.milkDaysLeft + ' GÜN KALDI' : 'GÜVENLİ'}</span>
           </div>
         </div>
       </div>
     </div>
+  ` : `
+    <div class="glass-card withdrawal-card" style="margin-bottom:var(--space-lg); border:1px solid rgba(34,197,94,0.3); background:rgba(34,197,94,0.03);">
+      <div class="withdrawal-header" style="color:var(--accent-green)">
+        <span class="warning-icon">✅</span>
+        <strong>SATIŞ VE TÜKETİM YASAĞI YOK</strong>
+      </div>
+      <div class="withdrawal-body">
+        <p style="font-size:0.85rem; color:var(--text-secondary);">
+          Bu hayvan için aktif ilaç arınma süresi veya satış yasağı bulunmamaktadır.
+        </p>
+      </div>
+    </div>
+  `;
 
-    <div class="section-title"><span class="dot" style="background:#a855f7"></span>Bireysel Aşı & Tedavi Geçmişi</div>
-    <div class="glass-card agenda-list" style="margin-bottom:var(--space-xl);">
-      ${_renderIndividualVaccines(animal)}
+  // Medikal geçmiş (treatmentRecords'tan)
+  const medHistoryHtml = _renderMedicalHistory(animal.tagID);
+
+  return `
+    <div class="section-title"><span class="dot" style="background:var(--danger-red)"></span>Bireysel Arınma Durumu</div>
+    ${withdrawalCardHtml}
+
+    <div class="section-title"><span class="dot" style="background:#a855f7"></span>Medikal Geçmiş & Aşı / Tedavi Kayıtları</div>
+    <div class="glass-card" style="margin-bottom:var(--space-lg); padding:var(--space-sm);">
+      ${medHistoryHtml}
     </div>
 
     <div style="display:flex; flex-direction:column; gap:12px; position:relative !important; width:calc(100% - var(--space-lg)*2); margin:0 auto var(--space-xl) auto;">
       <button class="huge-btn btn-primary" id="btn-ind-med" style="width:100%; border-radius:24px; padding:16px; background:var(--accent-red); box-shadow:0 4px 16px rgba(239,68,68,0.4);">
-        <span class="btn-icon">💉</span> Aşı / Tedavi Ekle
+        <span class="btn-icon">💉</span> Tedavi Uygula (Akıllı Motor)
       </button>
       <button class="huge-btn btn-secondary" id="btn-ind-disease" style="width:100%; border-radius:24px; padding:16px;">
         <span class="btn-icon">🤒</span> Hastalık / Belirti Kaydet
@@ -488,28 +577,14 @@ function _renderHealthTab(animal) {
 }
 
 function _initHealthTab() {
+  // Tedavi butonu — Akıllı Tedavi Motoru'nu çağırır
   const btnMed = _container.querySelector('#btn-ind-med');
   if (btnMed) {
     btnMed.addEventListener('click', async () => {
-      const vName = await showPrompt('Aşı & Tedavi', `Bu hayvan (TR-...) için eklenecek ilacı/aşıyı giriniz:`, 'text', '💉');
-      if (vName) {
-        // global state e ekle
-        const state = getState();
-        const activeId = state.activeAnimalId || (state.animals && state.animals.length > 0 ? state.animals[0].id : null);
-        const rawAnimal = getAnimalById(activeId) || {};
-        const tagToUse = rawAnimal.tagID || 'TR-102';
-        
-        const newV = {
-          id: Date.now(),
-          name: vName,
-          date: new Date().toLocaleDateString('tr-TR', { day: '2-digit', month: 'short', year: 'numeric' }),
-          status: 'done',
-          target: tagToUse
-        };
-        setState({ vaccines: [newV, ...(state.vaccines || [])] });
-        showAlert('Başarılı', `${vName} aşısı ${tagToUse} için kaydedildi.`, '✅');
-        _rerender();
-      }
+      const state = getState();
+      const activeId = state.activeAnimalId || (state.animals && state.animals.length > 0 ? state.animals[0].id : null);
+      const result = await openTreatmentModal(activeId);
+      if (result.applied) _rerender();
     });
   }
 
@@ -590,7 +665,20 @@ function _initHealthTab() {
         animals[motherIdx] = { ...animals[motherIdx], group: 'Sağmal' };
       }
 
-      setState({ animals });
+      // Aktif breedingRecord varsa COMPLETED'a al
+      let breedingRecords = [...(state.breedingRecords || [])];
+      const activeBreeding = breedingRecords.find(r =>
+        (r.status === 'ACTIVE' || r.status === 'PREGNANT') && r.damIds.includes(activeId)
+      );
+      if (activeBreeding) {
+        breedingRecords = recordBirth(activeBreeding.id, {
+          date: birthDateVal,
+          type: 'Normal',
+          lambCount: 1
+        }, breedingRecords);
+      }
+
+      setState({ animals, breedingRecords });
       await showAlert('Doğum Kaydedildi! 🎉', 
         `${motherTag} → ${babyId} (${babyType}, ${genderOpt.value}, ${birthWeight} kg)\n` +
         `Ana: ${motherTag}\nBaba: ${fatherTag || 'Bilinmiyor'}\n\nYavru sürüye eklendi.`, '🐣');
@@ -614,20 +702,57 @@ function _initHealthTab() {
       );
 
       if (confirmed) {
-        let deathDate = await showPrompt('Ölüm Tarihi', 'Hayvanın ölüm tarihini seçin:', 'date', '📅');
-        if (!deathDate) deathDate = new Date().toISOString().split('T')[0];
+        const form = await showFormModal(`Ölüm Bildirimi (${tagToUse})`, [
+          { id: 'deathDate', label: 'Ölüm Tarihi', type: 'date', value: new Date().toISOString().split('T')[0] },
+          { id: 'reason', label: 'Ölüm Sebebi / Teşhis', type: 'select', options: [
+            'Enterotoksemi (Çelerme)',
+            'Pnömoni (Zatürre / Solunum)',
+            'Şap Hastalığı',
+            'Mastitis (Meme İltihabı)',
+            'Doğum Komplikasyonu',
+            'Zehirlenme / Yem Şişmesi',
+            'Kaza / Yaralanma / Kırık',
+            'Yaşlılık / Ecel',
+            'Diğer / Bilinmeyen'
+          ]},
+          { id: 'financialLoss', label: 'Tahmini Finansal Kayıp (₺)', type: 'number', value: (parseFloat(rawAnimal.weight || 45) * 190).toFixed(0) },
+          { id: 'note', label: 'Açıklama / Not', type: 'text', placeholder: 'Kayıp notu' }
+        ], '☠️');
 
-        // Sürüden çıkar
+        if (!form) return;
+
+        const deathDate = form.deathDate || new Date().toISOString().split('T')[0];
+        const reason = form.reason || 'Diğer / Bilinmeyen';
+        const loss = parseFloat(form.financialLoss) || (parseFloat(rawAnimal.weight || 45) * 190);
+
+        // Canlı sürüden çıkar
         const animals = [...(state.animals || [])];
         const idx = animals.findIndex(a => a.id === activeId);
         if (idx > -1) animals.splice(idx, 1);
 
-        // Geçmişe kaydet
+        // Mortalite kayıtlarına ekle
+        const mortalityRecords = [...(state.mortalityRecords || [])];
+        mortalityRecords.unshift({
+          id: 'MORT-' + Date.now(),
+          animalId: tagToUse,
+          rfid: rawAnimal.rfid || 'RFID-UNKNOWN',
+          breed: rawAnimal.breed || 'Merinos',
+          type: rawAnimal.type || 'Koyun',
+          gender: rawAnimal.gender || 'Dişi',
+          group: rawAnimal.group || 'Besi',
+          lastWeight: rawAnimal.weight || 0,
+          deathDate: deathDate,
+          deathReason: reason,
+          financialLoss: loss,
+          note: form.note || ''
+        });
+
+        // Görev geçmişine ekle
         const taskHistory = [...(state.taskHistory || [])];
         taskHistory.unshift({
           id: 'DEATH-' + Date.now(),
           title: `Ölüm Kaydı: ${tagToUse}`,
-          desc: `${rawAnimal.breed || ''} ${rawAnimal.type || ''} - ${rawAnimal.group || ''}. Sürüden çıkarıldı.`,
+          desc: `Sebep: ${reason}. Sürüden çıkarıldı ve Ölüm Raporlarına işlendi.`,
           type: 'other',
           prio: 'High',
           scope: 'individual',
@@ -637,8 +762,8 @@ function _initHealthTab() {
           completedAt: deathDate
         });
 
-        setState({ animals, taskHistory });
-        await showAlert('Ölüm Kaydedildi', `${tagToUse} sürüden çıkarıldı ve kayıt geçmişe düştü.`, '😢');
+        setState({ animals, mortalityRecords, taskHistory });
+        await showAlert('Ölüm Kaydedildi', `${tagToUse} sürüden çıkarıldı, ölüm nedeni (${reason}) ve finansal kayıp (${loss} ₺) Ölüm Raporları'na işlendi.`, '😢');
         navigateTo('herd-list');
       }
     });
@@ -647,7 +772,7 @@ function _initHealthTab() {
 
 function _renderIndividualVaccines(animal) {
   const state = getState();
-  const indVaccines = (state.vaccines || []).filter(v => v.target.includes(animal.tagID));
+  const indVaccines = (state.vaccines || []).filter(v => !v.target || v.target === 'Tüm Sürü' || v.target === 'Sürü Geneli' || v.target.includes(animal.tagID));
   if (indVaccines.length === 0) {
     return '<p style="font-size:0.85rem; color:var(--text-muted); text-align:center; padding:10px;">Kayıtlı bireysel aşı/tedavi bulunmuyor.</p>';
   }
@@ -729,7 +854,40 @@ function _renderFinanceTab(animal) {
 
 function _initFinanceTab() {
   const btnSell = _container.querySelector('#btn-sell-ind');
-  if (btnSell) btnSell.addEventListener('click', () => showAlert('Hızlı Satış', '[SIM] Bu hayvanı satıldığında ROI kaydı arşivlenir.', '💰'));
+  if (btnSell) {
+    btnSell.addEventListener('click', async () => {
+      const state = getState();
+      const activeId = state.activeAnimalId || (state.animals && state.animals.length > 0 ? state.animals[0].id : null);
+      if (!activeId) return;
+
+      // ── GÜVENLİK KİLİDİ: Arınma süresi kontrolü ──
+      const ws = getAnimalWithdrawalStatus(activeId);
+      if (ws.hasActiveWithdrawal && ws.meatDaysLeft > 0) {
+        // 1. Aşama: Bilgilendirme uyarısı
+        const firstConfirm = await showConfirm(
+          '🚨 ARINMA SÜRESİ DOLMADI',
+          `UYARI: ${activeId} küpe numaralı hayvanın et arınma süresi dolmamıştır!\n\n` +
+          `🛑 Kalan Süre: ${ws.meatDaysLeft} gün\n` +
+          `💊 İlaç: ${ws.activeMedName || 'Kayıtlı İlaç'}\n\n` +
+          `Yasal olarak bu hayvanın kesimi veya et satışı yapılamaz.\nDevam etmek istediğinize emin misiniz?`,
+          '🚨'
+        );
+        if (!firstConfirm) return;
+
+        // 2. Aşama: İkinci onay — bilinçli risk kabul
+        const secondConfirm = await showConfirm(
+          '⚠️ SON UYARI — YASAL SORUMLULUK',
+          `Bu işlem kayıt altına alınacaktır.\n\n` +
+          `Arınma süresi dolmamış hayvanın satışı/kesimi gıda güvenliği mevzuatına aykırıdır.\n\n` +
+          `Tüm yasal sorumluluğu kabul ederek devam etmek istiyor musunuz?`,
+          '⚠️'
+        );
+        if (!secondConfirm) return;
+      }
+
+      await showAlert('Hızlı Satış', '[SIM] Bu hayvanı satıldığında ROI kaydı arşivlenir.', '💰');
+    });
+  }
 }
 
 // ═══════════════════════════════════════
@@ -863,13 +1021,132 @@ function _rerender() {
 }
 
 // ── Helpers ──
+
+function _getMedCategoryIcon(category, name) {
+  const cat = (category || '').toLowerCase();
+  const n = (name || '').toLowerCase();
+  if (cat.includes('aşı') || n.includes('aşı') || n.includes('karma') || n.includes('vaccine')) {
+    return '💉';
+  }
+  if (cat.includes('antibiyotik')) {
+    return '🧪';
+  }
+  if (cat.includes('vitamin') || n.includes('sevit') || n.includes('ademin') || n.includes('nervit')) {
+    return '💊';
+  }
+  if (cat.includes('antiparaziter') || n.includes('dectomax')) {
+    return '🪱';
+  }
+  if (cat.includes('nsaid') || cat.includes('ağrı')) {
+    return '💊';
+  }
+  return '💊';
+}
+
+function _renderMedicalHistory(animalId) {
+  const state = getState();
+  const animal = getAnimalById(animalId);
+  const animalTag = animal ? (animal.tagID || animal.id) : animalId;
+
+  // 1. Tedavi Kayıtları (treatmentRecords)
+  const tRecords = (state.treatmentRecords || []).filter(r =>
+    r.animalId === animalId || r.animalId === animalTag || (r.batchTargets && (r.batchTargets.includes(animalId) || r.batchTargets.includes(animalTag)))
+  ).map(r => {
+    // Net bireysel dozaj hesaplama
+    const netDose = r.appliedDosePerAnimal || r.dosagePerAnimal || (
+      r.applicationType === 'batch' && r.totalBatchQuantity && r.batchTargets?.length
+        ? parseFloat((r.totalBatchQuantity / r.batchTargets.length).toFixed(2))
+        : r.dosage
+    );
+    return {
+      id: r.id,
+      name: r.medicationName,
+      activeIngredient: r.activeIngredient || '',
+      category: r.category || 'Tedavi',
+      dosageStr: `${netDose} ${r.dosageUnit || 'ml'}`,
+      date: r.applicationDate,
+      type: (r.category === 'Aşı' || (r.medicationName || '').toLowerCase().includes('aşı')) ? 'vaccine' : 'treatment',
+      isActive: r.withdrawals && (
+        new Date(r.withdrawals.meatSafeDate) > new Date() ||
+        new Date(r.withdrawals.milkSafeDate) > new Date()
+      ),
+      courseInfo: r.courseInfo,
+      pregnancyOverride: r.pregnancyOverride,
+      notes: r.notes,
+      source: 'treatmentRecord'
+    };
+  });
+
+  // 2. Aşı Kayıtları (state.vaccines)
+  const vRecords = (state.vaccines || []).filter(v => {
+    const isTarget = v.target === animalId || v.target === animalTag || (v.batchTargets && (v.batchTargets.includes(animalId) || v.batchTargets.includes(animalTag)));
+    const duplicateInTreatment = tRecords.some(tr => tr.name === v.name && tr.date === v.date);
+    return isTarget && !duplicateInTreatment;
+  }).map(v => ({
+    id: v.id,
+    name: v.name,
+    activeIngredient: v.activeIngredient || 'Bağışıklık Aşısı',
+    category: 'Aşı',
+    dosageStr: v.dosage ? `${v.dosage} ml/doz` : '1 doz',
+    date: v.date,
+    type: 'vaccine',
+    isActive: false,
+    notes: v.notes || '',
+    source: 'vaccine'
+  }));
+
+  // Zaman kronolojisine göre birleştir (en yeni üstte)
+  const combined = [...tRecords, ...vRecords].sort((a, b) => new Date(b.date) - new Date(a.date));
+
+  if (combined.length === 0) {
+    return `
+      <div style="text-align:center; padding:24px 12px;">
+        <span style="font-size:2.2rem;">📋</span>
+        <p style="font-size:0.85rem; font-weight:600; color:var(--text-secondary); margin-top:8px;">Henüz Aşı veya Tedavi Kaydı Bulunmuyor</p>
+        <p style="font-size:0.75rem; color:var(--text-muted); margin-top:2px;">Bu hayvana uygulanan tüm aşı, ilaç ve vitaminler burada görüntülenecektir.</p>
+      </div>
+    `;
+  }
+
+  return combined.slice(0, 15).map(r => {
+    const icon = _getMedCategoryIcon(r.category, r.name);
+    const borderColor = r.isActive ? 'var(--danger-red)' : (r.type === 'vaccine' ? 'var(--accent-cyan)' : 'var(--accent-green)');
+    const categoryBadgeStyle = r.type === 'vaccine' ? 'background:rgba(6,182,212,0.15); color:#22d3ee;' : 'background:rgba(34,197,94,0.15); color:#4ade80;';
+
+    return `
+      <div class="med-history-item" style="padding:12px 14px; border-left:4px solid ${borderColor}; margin-bottom:10px; background:rgba(15,23,42,0.5); border-radius:0 12px 12px 0; border-top:1px solid rgba(255,255,255,0.05); border-right:1px solid rgba(255,255,255,0.05); border-bottom:1px solid rgba(255,255,255,0.05);">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
+          <div style="flex:1; min-width:0;">
+            <div style="font-weight:700; font-size:0.9rem; color:var(--text-primary); display:flex; align-items:center; gap:6px;">
+              <span>${icon}</span>
+              <span>${r.name}</span>
+              <span style="font-size:0.65rem; padding:2px 8px; border-radius:10px; font-weight:600; ${categoryBadgeStyle}">${r.category || 'Tedavi'}</span>
+            </div>
+            <div style="font-size:0.75rem; color:var(--text-secondary); margin-top:4px; font-weight:500;">
+              ${r.activeIngredient ? `<strong>${r.activeIngredient}</strong> • ` : ''}<span style="color:var(--accent-cyan); font-weight:700;">${r.dosageStr}</span>
+            </div>
+          </div>
+          <div style="font-size:0.7rem; color:var(--text-muted); text-align:right; flex-shrink:0;">
+            <div style="font-weight:600;">${r.date}</div>
+            ${r.isActive ? '<div style="color:var(--danger-red); font-weight:700; margin-top:3px; font-size:0.65rem;">🛑 Karantinada</div>' : '<div style="color:var(--accent-green); margin-top:3px; font-size:0.65rem; font-weight:600;">✅ Uygulandı</div>'}
+          </div>
+        </div>
+        ${r.courseInfo?.totalDays > 1 ? `<div style="font-size:0.7rem; color:var(--accent-purple); margin-top:6px; font-weight:600;">⏱️ ${r.courseInfo.totalDays} günlük kür tedavisi</div>` : ''}
+        ${r.pregnancyOverride ? '<div style="font-size:0.7rem; color:var(--danger-red); margin-top:4px; font-weight:600;">⚠️ Gebelik uyarısı onaylanarak uygulandı</div>' : ''}
+        ${r.notes ? `<div style="font-size:0.7rem; color:var(--text-muted); margin-top:4px; font-style:italic;">📝 Not: ${r.notes}</div>` : ''}
+      </div>
+    `;
+  }).join('');
+}
+
 function _calculateAge(birthDateString) {
   if(!birthDateString) return '1.5 Yaşında';
   const birth = new Date(birthDateString);
-  const now = new Date('2026-03-18'); 
+  const now = new Date(); 
   let months = (now.getFullYear() - birth.getFullYear()) * 12;
   months -= birth.getMonth();
   months += now.getMonth();
+  if (months < 0) months = 0;
   if (months < 12) return `${months} Aylık`;
   const years = Math.floor(months / 12);
   const remainder = months % 12;

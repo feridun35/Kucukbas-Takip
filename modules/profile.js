@@ -4,6 +4,7 @@
 
 import { showAlert, showConfirm, showPrompt } from '../core/modal.js';
 import { getState, setState } from '../core/state.js';
+import { getCurrentUser, logout, updateCurrentUser } from '../core/auth.js';
 
 let _container = null;
 
@@ -13,17 +14,34 @@ export function render() {
   _container.style.paddingBottom = '110px'; 
   
   const state = getState();
-  const role = state.userRole || 'owner';
+  const currentUser = getCurrentUser() || {
+    ownerName: 'Misafir Kullanıcı',
+    farmName: 'ShepherdAI Çiftliği',
+    email: 'kullanici@shepherdai.com',
+    role: state.userRole || 'owner',
+    id: 'usr_guest',
+    isDemo: false
+  };
+
+  const role = state.userRole || currentUser.role || 'owner';
   const isOwner = role === 'owner';
+  const isDemo = currentUser.isDemo || currentUser.id === 'demo';
   
   _container.innerHTML = `
     <div class="profile-header-card glass-card" style="display:flex; flex-direction:column; align-items:center; padding:var(--space-xl); margin-bottom:var(--space-lg); text-align:center;">
       <div style="width:90px; height:90px; border-radius:50%; background:${isOwner ? 'var(--accent-blue)' : 'var(--accent-green)'}; display:flex; align-items:center; justify-content:center; font-size:40px; box-shadow:0 0 20px ${isOwner ? 'var(--accent-blue-glow)' : 'var(--accent-green-glow)'}; margin-bottom:var(--space-sm);">
         ${isOwner ? '👨‍🌾' : '🧑‍🔧'}
       </div>
-      <h2 style="font-size:1.4rem; color:var(--text-primary); font-weight:700;">${isOwner ? 'Feridun Bey' : 'Veli Usta'}</h2>
-      <p style="color:${isOwner ? 'var(--accent-green)' : 'var(--accent-blue)'}; font-size:0.9rem; font-weight:500;">${isOwner ? 'Çiftlik Sahibi & Ana Yönetici' : 'Çoban / Saha Çalışanı'}</p>
-      <p style="color:var(--text-muted); font-size:0.8rem; margin-top:4px;">UID: ${isOwner ? 'SHEP-4921-X' : 'SHEP-7710-W'}</p>
+      <h2 style="font-size:1.4rem; color:var(--text-primary); font-weight:700;">${currentUser.ownerName}</h2>
+      <p style="color:${isOwner ? 'var(--accent-green)' : 'var(--accent-blue)'}; font-size:0.9rem; font-weight:500;">
+        ${currentUser.farmName} • ${isOwner ? 'Çiftlik Sahibi & Yönetici' : 'Çoban / Saha Çalışanı'}
+      </p>
+      <div style="display:flex; gap:6px; margin-top:8px; align-items:center;">
+        <span style="font-size:0.75rem; padding:3px 10px; border-radius:12px; background:rgba(255,255,255,0.08); color:var(--text-muted);">
+          ${currentUser.email}
+        </span>
+        ${isDemo ? '<span style="font-size:0.75rem; padding:3px 10px; border-radius:12px; background:rgba(59,130,246,0.2); color:var(--accent-blue); font-weight:600;">Demo</span>' : '<span style="font-size:0.75rem; padding:3px 10px; border-radius:12px; background:rgba(34,197,94,0.2); color:var(--accent-green); font-weight:600;">Canlı İşletme</span>'}
+      </div>
     </div>
 
     <!-- Rol Seçimi -->
@@ -42,7 +60,7 @@ export function render() {
       </p>
     </div>
 
-    <div class="section-title"><span class="dot"></span>Uygulama Ayarları</div>
+    <div class="section-title"><span class="dot"></span>Uygulama & Çiftlik Ayarları</div>
     <div class="glass-card settings-list" style="padding:0; margin-bottom:var(--space-lg);">
       
       <!-- Setting Item -->
@@ -65,7 +83,7 @@ export function render() {
           <span style="font-size:1.2rem;">🏠</span>
           <div>
             <h4 style="font-size:1rem; color:var(--text-primary);">Çiftlik Adı</h4>
-            <p style="font-size:0.75rem; color:var(--text-muted);">Kayıtlı çiftlik ismini değiştir.</p>
+            <p style="font-size:0.75rem; color:var(--text-muted);">${currentUser.farmName}</p>
           </div>
         </div>
         <span style="color:var(--text-muted);">❯</span>
@@ -86,8 +104,8 @@ export function render() {
     </div>
 
     <div style="margin-top:var(--space-xl);">
-      <button id="btn-logout" class="btn-secondary" style="width:100%; border-radius:24px; padding:16px; font-size:1rem; color:var(--danger-red); border-color:rgba(239,68,68,0.3); background:rgba(239,68,68,0.05);">
-        Sistemden Çıkış Yap
+      <button id="btn-logout" class="btn-secondary" style="width:100%; border-radius:24px; padding:16px; font-size:1rem; color:var(--danger-red); border-color:rgba(239,68,68,0.3); background:rgba(239,68,68,0.05); font-weight:700; cursor:pointer;">
+        🚪 Sistemden Çıkış Yap
       </button>
     </div>
   `;
@@ -138,8 +156,10 @@ export function init() {
   if (btnFarm) {
     btnFarm.addEventListener('click', async () => {
       const newFarm = await showPrompt('Çiftlik Ayarları', 'Çiftliğiniz için yeni bir isim belirleyin:', 'text', '🏠');
-      if (newFarm) {
-        showAlert('Başarılı', `Çiftlik adı "${newFarm}" olarak güncellendi.`, '✅');
+      if (newFarm && newFarm.trim()) {
+        updateCurrentUser({ farmName: newFarm.trim() });
+        _rerender();
+        showAlert('Başarılı', `Çiftlik adı "${newFarm.trim()}" olarak güncellendi.`, '✅');
       }
     });
   }
@@ -158,9 +178,9 @@ export function init() {
   const btnLogout = _container.querySelector('#btn-logout');
   if (btnLogout) {
     btnLogout.addEventListener('click', async () => {
-      const answer = await showConfirm('Sistemden Çıkış', 'Hesabınızdan çıkmak istediğinize emin misiniz?', '🚪');
+      const answer = await showConfirm('Sistemden Çıkış', 'Hesabınızdan çıkmak ve oturumu kapatmak istediğinize emin misiniz?', '🚪');
       if (answer) {
-        showAlert('Oturum Kapatılıyor', 'Hesabınızdan güvenle çıkış yapıldı.', '👋');
+        logout();
       }
     });
   }

@@ -4,11 +4,23 @@
  */
 
 import { getState, setState } from '../core/state.js';
-import { getTasksForUser, getTaskHistory, addTask, completeTask, TASK_TYPES, processSensorForEmergency } from '../core/workforceManager.js';
+import { 
+  getTasksForUser, 
+  getTaskHistory, 
+  addTask, 
+  completeTask, 
+  TASK_TYPES, 
+  processSensorForEmergency,
+  filterTasksByTimeRange,
+  getTaskCountsByTimeRange,
+  getTaskDueDate,
+  isTaskOverdue
+} from '../core/workforceManager.js';
 import { showConfirm, showAlert, showPrompt, showSelect } from '../core/modal.js';
 
 let _container = null;
 let _viewMode = 'active'; // 'active' | 'history'
+let _timeFilter = 'week'; // 'week' | 'month' | 'all'
 
 export function render() {
   _container = document.createElement('div');
@@ -54,6 +66,18 @@ export function init() {
   const btnHistory = _container.querySelector('#btn-view-history');
   if (btnActive) btnActive.addEventListener('click', () => { _viewMode = 'active'; _rerender(); });
   if (btnHistory) btnHistory.addEventListener('click', () => { _viewMode = 'history'; _rerender(); });
+
+  // Zaman Filtresi Çipleri (Bu Hafta / Bu Ay / Tümü)
+  const chipBtns = _container.querySelectorAll('.task-filter-chips .chip-btn');
+  chipBtns.forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const filter = e.currentTarget.getAttribute('data-filter');
+      if (filter) {
+        _timeFilter = filter;
+        _rerender();
+      }
+    });
+  });
 
   // Görev Tamamlama butonları
   const completeBtns = _container.querySelectorAll('.btn-complete-task');
@@ -105,7 +129,7 @@ export function init() {
 // Görev Ekleme Akışı (Sürü & Bireysel)
 // ═══════════════════════════════════════
 async function _showAddTaskFlow(scope, animalTag) {
-  // 1. Tür seçimi (tıklanabilir butonlar)
+  // 1. Tür seçimi
   const typeOptions = TASK_TYPES.map(t => ({ value: t.value, label: t.label, color: t.color }));
   const selectedType = await showSelect(
     `Görev Türü Seçin ${scope === 'herd' ? '(Sürü Görevi)' : '(Bireysel)'}`,
@@ -121,12 +145,16 @@ async function _showAddTaskFlow(scope, animalTag) {
   // 3. Açıklama
   const desc = await showPrompt('Açıklama', 'Kısa açıklama (opsiyonel):', 'text', '📝') || '';
 
-  // 4. Öncelik (tıklanabilir)
+  // 4. Öncelik
   const prioOption = await showSelect('Öncelik Seçin', [
     { value: 'High', label: 'Yüksek Öncelik', color: '#ef4444', icon: '🔴' },
     { value: 'Normal', label: 'Normal Öncelik', color: '#3b82f6', icon: '🟢' }
   ], '⚡');
   const prio = prioOption ? prioOption.value : 'Normal';
+
+  // 5. Vade Tarihi (dueDate)
+  const todayDefault = new Date().toISOString().split('T')[0];
+  const dueDate = await showPrompt('Son Tarih (YYYY-MM-DD)', 'Görevin vadesi (Varsayılan: Bugün):', 'text', todayDefault) || todayDefault;
 
   // Ekle
   const newTask = addTask({
@@ -135,7 +163,8 @@ async function _showAddTaskFlow(scope, animalTag) {
     type: matchedType.value,
     prio,
     scope,
-    targetTag: animalTag
+    targetTag: animalTag,
+    dueDate
   });
 
   showAlert('Görev Eklendi', `"${newTask.title}" başarıyla ${scope === 'herd' ? '🐑 Sürü' : animalTag} görevi olarak eklendi.`, '✅');
@@ -175,7 +204,7 @@ function _renderHeader(role, pendingCount, historyCount) {
 
 function _renderViewToggle() {
   return `
-    <div style="display:flex; gap:8px; margin:var(--space-md) 0;">
+    <div style="display:flex; gap:8px; margin:var(--space-md) 0 8px 0;">
       <button id="btn-view-active" style="flex:1; padding:10px; border-radius:12px; border:none; font-weight:600; cursor:pointer; transition:0.2s; background:${_viewMode === 'active' ? 'var(--accent-blue)' : 'var(--glass-bg)'}; color:${_viewMode === 'active' ? '#fff' : 'var(--text-muted)'};">
         📋 Aktif Görevler
       </button>
@@ -186,38 +215,75 @@ function _renderViewToggle() {
   `;
 }
 
-function _renderOwnerDashboard(tasks) {
-  if (tasks.length === 0) {
+function _renderTimeFilterChips(tasks) {
+  const counts = getTaskCountsByTimeRange(tasks);
+  return `
+    <div class="task-filter-chips">
+      <button class="chip-btn ${_timeFilter === 'week' ? 'active' : ''}" data-filter="week">
+        📅 Bu Hafta (${counts.weekCount})
+      </button>
+      <button class="chip-btn ${_timeFilter === 'month' ? 'active' : ''}" data-filter="month">
+        📆 Bu Ay (${counts.monthCount})
+      </button>
+      <button class="chip-btn ${_timeFilter === 'all' ? 'active' : ''}" data-filter="all">
+        🌐 Tümü (${counts.allCount})
+      </button>
+    </div>
+  `;
+}
+
+function _renderEmptyState(timeFilter) {
+  if (timeFilter === 'week') {
     return `
       <div class="glass-card" style="text-align:center; padding:var(--space-xl); color:var(--text-muted);">
-        <p style="font-size:2rem; margin-bottom:8px;">🎉</p>
-        <p>Tüm sürü görevleri tamamlandı!</p>
+        <p style="font-size:2.5rem; margin-bottom:8px;">🎉</p>
+        <p style="font-weight:700; color:var(--text-primary); font-size:1.05rem; margin-bottom:4px;">Bu hafta için planlanmış aktif görev bulunmuyor.</p>
+        <p style="font-size:0.9rem; color:var(--accent-green); font-weight:600;">Harika gidiyorsun!</p>
       </div>
     `;
   }
+  if (timeFilter === 'month') {
+    return `
+      <div class="glass-card" style="text-align:center; padding:var(--space-xl); color:var(--text-muted);">
+        <p style="font-size:2.5rem; margin-bottom:8px;">🗓️</p>
+        <p style="font-weight:700; color:var(--text-primary); font-size:1.05rem;">Bu ay için planlanmış aktif görev bulunmuyor.</p>
+      </div>
+    `;
+  }
+  return `
+    <div class="glass-card" style="text-align:center; padding:var(--space-xl); color:var(--text-muted);">
+      <p style="font-size:2.5rem; margin-bottom:8px;">✅</p>
+      <p style="font-weight:700; color:var(--text-primary); font-size:1.05rem;">Tüm sürü görevleri tamamlandı!</p>
+    </div>
+  `;
+}
+
+function _renderOwnerDashboard(tasks) {
+  const filteredTasks = filterTasksByTimeRange(tasks, _timeFilter);
 
   return `
-    <div class="section-title"><span class="dot" style="background:var(--accent-blue)"></span>Sürü Görevleri</div>
+    <div class="section-title" style="margin-top:12px;"><span class="dot" style="background:var(--accent-blue)"></span>Sürü Görevleri</div>
+    ${_renderTimeFilterChips(tasks)}
     <div class="task-list">
-      ${tasks.map(t => _renderTaskItem(t, 'owner')).join('')}
+      ${filteredTasks.length > 0
+        ? filteredTasks.map(t => _renderTaskItem(t, 'owner')).join('')
+        : _renderEmptyState(_timeFilter)
+      }
     </div>
   `;
 }
 
 function _renderWorkerTodoList(tasks) {
-  if (tasks.length === 0) {
-    return `
-      <div class="glass-card" style="text-align:center; padding:var(--space-xl); color:var(--text-muted);">
-        <p style="font-size:2rem; margin-bottom:8px;">✅</p>
-        <p>Bekleyen görev yok. İyi iş!</p>
-      </div>
-    `;
-  }
+  const filteredTasks = filterTasksByTimeRange(tasks, _timeFilter);
 
   return `
-    <div class="section-title"><span class="dot" style="background:var(--accent-green)"></span>Yapılacaklar</div>
+    <div class="section-title" style="margin-top:12px;"><span class="dot" style="background:var(--accent-green)"></span>Yapılacaklar</div>
+    ${_renderTimeFilterChips(tasks)}
     <div class="task-list worker-list">
-      ${tasks.map(t => _renderTaskItem(t, 'worker')).join('')}
+      ${filteredTasks.length > 0
+        ? filteredTasks.map(t => _renderTaskItem(t, 'worker')).join('')
+        : _renderEmptyState(_timeFilter)
+      }
     </div>
   `;
 }
@@ -226,14 +292,14 @@ function _renderHistoryList(history) {
   if (history.length === 0) {
     return `
       <div class="glass-card" style="text-align:center; padding:var(--space-xl); color:var(--text-muted);">
-        <p style="font-size:2rem; margin-bottom:8px;">📭</p>
-        <p>Henüz tamamlanan görev yok.</p>
+        <p style="font-size:2.5rem; margin-bottom:8px;">📭</p>
+        <p style="font-weight:600; color:var(--text-primary);">Henüz tamamlanan görev yok.</p>
       </div>
     `;
   }
 
   return `
-    <div class="section-title"><span class="dot" style="background:var(--accent-purple)"></span>Tamamlanan Görevler</div>
+    <div class="section-title" style="margin-top:12px;"><span class="dot" style="background:var(--accent-purple)"></span>Tamamlanan Görevler</div>
     <div class="task-list">
       ${history.map(t => {
         const typeInfo = TASK_TYPES.find(tt => tt.value === t.type) || TASK_TYPES[5];
@@ -259,13 +325,17 @@ function _renderHistoryList(history) {
 function _renderTaskItem(task, role) {
   const typeInfo = TASK_TYPES.find(t => t.value === task.type) || TASK_TYPES[5];
   const isCompleted = task.status === 'completed';
-  const statusColor = isCompleted ? '#10b981' : (task.prio === 'High' ? '#ef4444' : '#f97316');
-  
+  const overdue = isTaskOverdue(task);
+  const dueDateStr = getTaskDueDate(task);
+
+  const statusColor = isCompleted ? '#10b981' : (overdue ? '#ef4444' : (task.prio === 'High' ? '#ef4444' : '#f97316'));
+  const cardBorderColor = overdue ? '#ef4444' : typeInfo.color;
+
   let actionArea = '';
   if (!isCompleted) {
     actionArea = `
       <div class="t-action" data-task-id="${task.id}">
-        <button class="btn-complete-task" style="padding:8px 14px; border-radius:12px; border:none; background:var(--accent-green); color:#fff; font-weight:600; font-size:0.75rem; cursor:pointer; box-shadow:0 2px 8px rgba(34,197,94,0.3);">
+        <button class="btn-complete-task" style="padding:8px 14px; border-radius:12px; border:none; background:${overdue ? 'var(--danger-red)' : 'var(--accent-green)'}; color:#fff; font-weight:600; font-size:0.75rem; cursor:pointer; box-shadow:0 2px 8px ${overdue ? 'rgba(239,68,68,0.4)' : 'rgba(34,197,94,0.3)'};">
           ✅ Tamamla
         </button>
       </div>
@@ -275,15 +345,19 @@ function _renderTaskItem(task, role) {
   }
 
   return `
-    <div class="task-card ${isCompleted ? 'completed-task' : ''}" style="border-left: 4px solid ${typeInfo.color}">
+    <div class="task-card ${isCompleted ? 'completed-task' : ''} ${overdue ? 'overdue-task' : ''}" style="border-left: 4px solid ${cardBorderColor}">
       <div class="t-main">
-        <div class="t-title">
-          <span style="font-size:0.85rem;">${typeInfo.label.split(' ')[0]}</span> ${task.title}
-          ${task.prio === 'High' ? '<span style="font-size:0.65rem; background:rgba(239,68,68,0.2); color:var(--danger-red); padding:2px 6px; border-radius:6px; margin-left:6px;">ACIL</span>' : ''}
+        <div class="t-title" style="display:flex; align-items:center; flex-wrap:wrap; gap:4px;">
+          <span style="font-size:0.85rem;">${typeInfo.label.split(' ')[0]}</span>
+          <span>${task.title}</span>
+          ${overdue ? '<span class="badge-overdue">⚠️ GECİKMİŞ</span>' : ''}
+          ${task.prio === 'High' && !overdue ? '<span style="font-size:0.65rem; background:rgba(239,68,68,0.2); color:var(--danger-red); padding:2px 6px; border-radius:6px; margin-left:4px;">ACİL</span>' : ''}
         </div>
-        <div class="t-desc">${task.desc}</div>
-        ${task.targetTag ? `<div class="t-target">Hedef: <span class="badge" style="background:rgba(255,255,255,0.1)">${task.targetTag}</span></div>` : ''}
-        <div style="font-size:0.65rem; color:var(--text-muted); margin-top:4px;">Oluşturulma: ${task.createdAt}</div>
+        <div class="t-desc" style="margin-top:4px;">${task.desc}</div>
+        ${task.targetTag ? `<div class="t-target" style="margin-top:4px;">Hedef: <span class="badge" style="background:rgba(255,255,255,0.1)">${task.targetTag}</span></div>` : ''}
+        <div style="font-size:0.7rem; color:${overdue ? '#ef4444' : 'var(--text-muted)'}; font-weight:${overdue ? '700' : '400'}; margin-top:6px;">
+          📅 Son Tarih: ${dueDateStr} ${overdue ? '(Süresi Geçti!)' : ''}
+        </div>
       </div>
       ${actionArea}
     </div>

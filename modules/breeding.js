@@ -1,40 +1,99 @@
 /**
- * ShepherdAI — Sürü ve Islah (Genetik Eşleşme) Modülü UI
- * Eskiden Profile altında olan genetik eşleşme buraya taşındı.
+ * ShepherdAI — Üreme & Islah Yönetimi Paneli (UI Modülü)
+ *
+ * Gerçek state.breedingRecords ve state.animals verilerini kullanır.
+ * Mock bağımlılığı YOKTUR.
  */
 
 import { getState } from '../core/state.js';
-import { breedingMockEwe, breedingMockRam } from '../data/mock-data.js';
-import { checkInbreeding, calculateCompatibility, calculateBirthDate } from '../core/breedingManager.js';
+import { calculateBirthDate } from '../core/breedingManager.js';
 import { showAlert } from '../core/modal.js';
+import { openBreedingModal } from './breeding-modal.js';
 
 let _container = null;
-
-// Eşleşme veya Gebelik modu. (Gerçekte hayvan datalarından alınır)
-let _viewMode = 'mating'; // 'mating' (Eşleşme/Turuncu) veya 'pregnant' (Gebe/Lavanta)
 
 export function render() {
   _container = document.createElement('div');
   _container.className = 'page-enter herd-page';
-  _container.style.paddingBottom = '180px'; 
-  
-  const state = getState();
-  const focusMode = state.focusMode || 'meat';
+  _container.style.paddingBottom = '180px';
 
-  // Lojik Motor Hesaplamaları
-  const inbreedingResult = checkInbreeding(breedingMockEwe.tagID, breedingMockRam.tagID);
-  const compatibilityScore = calculateCompatibility(breedingMockEwe.tagID, breedingMockRam.tagID, focusMode);
-  
-  // Örnek gebelik durumu ('pregnant' modda iken gösterilecek)
-  const matingDateMock = new Date();
-  matingDateMock.setDate(matingDateMock.getDate() - 138); // 138 gün önce aşım olmuş (Örnek)
-  const pregData = calculateBirthDate(matingDateMock);
+  const state = getState();
+  const records = state.breedingRecords || [];
+  const animals = state.animals || [];
+
+  // ── Özet Metrikleri Hesapla ──
+  const activeRecords = records.filter(r => r.status === 'ACTIVE' || r.status === 'PREGNANT');
+  const pregnantRecords = records.filter(r => r.status === 'PREGNANT');
+  const completedRecords = records.filter(r => r.status === 'COMPLETED');
+
+  // Yaklaşan doğumlar (önümüzdeki 30 gün)
+  const today = new Date();
+  const upcomingBirths = pregnantRecords.filter(r => {
+    const expected = new Date(r.milestones.expectedBirthDate);
+    const diffDays = Math.round((expected - today) / 86400000);
+    return diffDays >= 0 && diffDays <= 30;
+  });
+
+  // Toplam gebe dişi sayısı
+  const totalPregnantDams = pregnantRecords.reduce((sum, r) => sum + r.damIds.length, 0);
+
+  // Aktif grup katımları
+  const activeGroupRecords = activeRecords.filter(r => r.type === 'GROUP');
+
+  // ── Yaklaşan Milestone'lar (Zaman Çizelgesi) ──
+  const milestoneEvents = _collectUpcomingMilestones(activeRecords, pregnantRecords);
 
   _container.innerHTML = `
-    <div class="section-title"><span class="dot"></span>Sürü Islah Yönetimi</div>
-    ${_renderModeToggle()}
-    ${_viewMode === 'mating' ? _renderMatingMatrix(inbreedingResult, compatibilityScore) : _renderPregnancyTracker(pregData)}
-    ${_renderHugeActionButtons()}
+    <div class="section-title"><span class="dot" style="background:var(--accent-orange)"></span>Üreme & Islah Yönetimi</div>
+
+    <!-- Özet Kartları -->
+    <div class="breeding-summary-cards">
+      <div class="breeding-summary-card">
+        <div class="breeding-card-icon">🤰</div>
+        <div class="breeding-card-value">${totalPregnantDams}</div>
+        <div class="breeding-card-label">Gebe Hayvan</div>
+      </div>
+      <div class="breeding-summary-card">
+        <div class="breeding-card-icon">🐣</div>
+        <div class="breeding-card-value">${upcomingBirths.length}</div>
+        <div class="breeding-card-label">Yaklaşan Doğum</div>
+      </div>
+      <div class="breeding-summary-card">
+        <div class="breeding-card-icon">🐏</div>
+        <div class="breeding-card-value">${activeGroupRecords.length}</div>
+        <div class="breeding-card-label">Aktif Grup Katımı</div>
+      </div>
+    </div>
+
+    <!-- Biyolojik Zaman Çizelgesi -->
+    <div class="section-title" style="margin-top:var(--space-lg);"><span class="dot" style="background:var(--accent-purple)"></span>Biyolojik Takvim</div>
+    <div class="glass-card" style="padding:var(--space-sm);">
+      ${milestoneEvents.length > 0 ? milestoneEvents.map(ev => `
+        <div class="breeding-timeline-item">
+          <div class="breeding-timeline-icon">${ev.icon}</div>
+          <div class="breeding-timeline-content">
+            <div class="breeding-timeline-title">${ev.title}</div>
+            <div class="breeding-timeline-meta">${ev.damLabel} • ${ev.dateLabel}</div>
+          </div>
+          <div class="breeding-timeline-badge ${ev.urgency}">${ev.daysLabel}</div>
+        </div>
+      `).join('') : `
+        <p style="font-size:0.85rem; color:var(--text-muted); text-align:center; padding:16px;">
+          Henüz aktif eşleşme/gebelik kaydı bulunmuyor.
+        </p>
+      `}
+    </div>
+
+    <!-- Aktif Eşleşmeler Listesi -->
+    <div class="section-title" style="margin-top:var(--space-lg);"><span class="dot" style="background:#f97316"></span>Eşleşme Kayıtları</div>
+    ${_renderRecordsList(records, animals)}
+
+    <!-- Aksiyon Butonu -->
+    <div style="position:relative !important; margin-top:var(--space-xl); width:calc(100% - var(--space-lg)*2); max-width:440px; margin-left:auto; margin-right:auto;">
+      <button class="huge-btn btn-primary" id="btn-new-breeding" style="width:100%; border-radius:24px; padding:16px; font-size:1.1rem; background:#f97316; box-shadow:0 4px 16px rgba(249,115,22,0.4);">
+        <span class="btn-icon" style="font-size:1.4rem">🐏</span> Yeni Koç Katımı
+      </button>
+    </div>
   `;
 
   return _container;
@@ -43,199 +102,168 @@ export function render() {
 export function init() {
   if (!_container) return;
 
-  const btnToggle = _container.querySelector('#btn-mode-toggle');
-  if (btnToggle) {
-    btnToggle.addEventListener('click', () => {
-      _viewMode = _viewMode === 'mating' ? 'pregnant' : 'mating';
-      
-      // Sayfayı yeniden renderla (Amelece SPA mantığı)
-      const parent = _container.parentNode;
-      const scrollPos = window.scrollY;
-      parent.innerHTML = '';
-      parent.appendChild(render());
-      init();
-      window.scrollTo(0, scrollPos);
-    });
-  }
-
-  const btnMate = _container.querySelector('#btn-record-mating');
-  if (btnMate) {
-    btnMate.addEventListener('click', () => {
-      showAlert('Aşım Kaydı', `[SIM] ${breedingMockEwe.tagID} ve ${breedingMockRam.tagID} aşım kaydı başarıyla oluşturuldu!\nGebelik periyodu başlatılıyor.`, '🔗');
-    });
-  }
-
-  const btnUltrasound = _container.querySelector('#btn-ultrasound');
-  if (btnUltrasound) {
-    btnUltrasound.addEventListener('click', () => {
-      showAlert('Ultrason Onayı', '[SIM] Ultrason Onayı ekranı açılıyor...', '🩺');
+  const btnNew = _container.querySelector('#btn-new-breeding');
+  if (btnNew) {
+    btnNew.addEventListener('click', async () => {
+      const result = await openBreedingModal();
+      if (result.saved) {
+        await showAlert('Eşleşme Kaydedildi! 🐏', 'Koç katımı kaydı ve otomatik görevler başarıyla oluşturuldu.', '✅');
+        _rerender();
+      }
     });
   }
 }
 
-// ═══════════════════════════════════════
+// ═══════════════════════════════════════════════════════════
 // Render Helpers
-// ═══════════════════════════════════════
+// ═══════════════════════════════════════════════════════════
 
-function _renderModeToggle() {
-  const isMating = _viewMode === 'mating';
-  return `
-    <div style="display:flex; justify-content:center; margin-bottom:var(--space-md);">
-      <button id="btn-mode-toggle" class="btn-secondary" style="font-size:0.7rem; padding:4px 12px; border-radius:12px;">
-        Görünüm Değiştir: ${isMating ? '🟠 Eşleşme (Mating)' : '🟣 Gebelik (Pregnancy)'} Modu
-      </button>
-    </div>
-  `;
-}
+function _collectUpcomingMilestones(activeRecords, pregnantRecords) {
+  const allRecords = [...activeRecords, ...pregnantRecords];
+  const today = new Date();
+  const events = [];
 
-function _renderMatingMatrix(inbreedingResult, compScore) {
-  return `
-    <!-- Akrabalık Uyarı Zirvesi -->
-    ${inbreedingResult.hasRisk ? `
-      <div class="inbreeding-alert">
-        <strong>⚠️ YÜKSEK AKRABALIK RİSKİ!</strong>
-        <span>Ortak Ata Tespit Edildi: ${inbreedingResult.commonAncestors.join(', ')}</span>
-      </div>
-    ` : ''}
+  // Unique records (active'de hem active hem pregnant olabilir, dedupe)
+  const seen = new Set();
+  allRecords.forEach(rec => {
+    if (seen.has(rec.id)) return;
+    seen.add(rec.id);
 
-    <div class="section-title"><span class="dot" style="background:var(--accent-orange)"></span>Genetik Eşleşme Kartı</div>
-    <div class="glass-card mating-card">
-      <div class="animals-vs">
-        <div class="mating-animal">
-          <span class="m-icon">🐑</span>
-          <span class="m-tag">${breedingMockEwe.tagID}</span>
-          <span class="m-role">Anaç</span>
-        </div>
-        <div class="mating-score-circle ${inbreedingResult.hasRisk ? 'risk' : 'safe'}">
-          <span class="s-val">%${compScore}</span>
-          <span class="s-lbl">Uyum Skoru</span>
-        </div>
-        <div class="mating-animal">
-          <span class="m-icon" style="filter: hue-rotate(45deg);">🐏</span>
-          <span class="m-tag">${breedingMockRam.tagID}</span>
-          <span class="m-role">Damızlık</span>
-        </div>
-      </div>
-    </div>
+    const ms = rec.milestones;
+    const damLabel = rec.damIds.length > 1 ? `${rec.damIds.length} Anaç` : rec.damIds[0];
 
-    <div class="section-title" style="margin-top:var(--space-lg)"><span class="dot" style="background:var(--accent-orange)"></span>Genetik Radar</div>
-    <div class="glass-card radar-container">
-      ${_generateRadarChart(breedingMockEwe.genetics, breedingMockRam.genetics)}
-      <div class="radar-legend">
-        <div class="r-leg-item"><span class="r-color-box ewe-c"></span> ${breedingMockEwe.tagID}</div>
-        <div class="r-leg-item"><span class="r-color-box ram-c"></span> ${breedingMockRam.tagID}</div>
-      </div>
-    </div>
-  `;
-}
+    const milestoneList = [
+      { key: 'cycleCheckDate', title: 'Kızgınlık Geri Dönme Kontrolü', icon: '🔴' },
+      { key: 'ultrasoundDate', title: 'Ultrason / Gebelik Muayenesi', icon: '🩺' },
+      { key: 'lateGestationDate', title: 'İleri Gebelik Bakımı & Çelerme Aşısı', icon: '💉' },
+      { key: 'expectedBirthDate', title: 'Tahmini Doğum', icon: '🐣' }
+    ];
 
-function _renderPregnancyTracker(pregData) {
-  const dateStr = pregData.expectedDate.toLocaleDateString('tr-TR', { day:'numeric', month:'long' });
-  const criticalClass = pregData.isCritical ? 'critical-glow' : 'safe-glow';
+    milestoneList.forEach(m => {
+      const dateStr = ms[m.key];
+      if (!dateStr) return;
+      const msDate = new Date(dateStr);
+      const diffDays = Math.round((msDate - today) / 86400000);
 
-  return `
-    <div class="pregnancy-header">
-      <span class="preg-icon">🤰</span> ${breedingMockEwe.tagID} Gebelik Durumu
-    </div>
+      // Sadece gelecek 60 gün ve geçmiş 5 gün içindekiler
+      if (diffDays >= -5 && diffDays <= 60) {
+        let urgency = 'normal';
+        let daysLabel = '';
+        if (diffDays < 0) {
+          urgency = 'overdue';
+          daysLabel = `${Math.abs(diffDays)} gün geçti`;
+        } else if (diffDays === 0) {
+          urgency = 'today';
+          daysLabel = 'BUGÜN';
+        } else if (diffDays <= 7) {
+          urgency = 'soon';
+          daysLabel = `${diffDays} gün`;
+        } else {
+          daysLabel = `${diffDays} gün`;
+        }
 
-    <div class="glass-card pregnancy-card ${criticalClass}">
-      <div class="preg-title">Doğuma Kalan Tahmini Süre</div>
-      <div class="preg-countdown">
-        <span class="num">${pregData.daysLeft}</span>
-        <span class="lbl">GÜN</span>
-      </div>
-      <div class="preg-date">Beklenen Doğum: <strong>${dateStr}</strong></div>
-      
-      <div class="preg-progress-container" style="margin-top:16px;">
-        <div class="preg-progress-bar" style="width: ${((150 - pregData.daysLeft) / 150) * 100}%;"></div>
-      </div>
-    </div>
-    
-    <div class="glass-card" style="margin-top:var(--space-lg); padding:var(--space-md); border-color: rgba(168, 85, 247, 0.3);">
-      <h3 style="font-size:0.8rem; margin-bottom:8px; color:var(--text-primary);">Gebe Rasyon Önerisi (Son Dönem)</h3>
-      <p style="font-size:0.75rem; color:var(--text-secondary); line-height:1.4;">
-        Hayvan <strong>Kritik Yaklaşanlar</strong> listesinde. Kuzu gelişimini desteklemek için enerji ve protein değeri yüksek, aynı zamanda fötüse (yavru) yer açmak adına hacmi (kaba yem) azaltılmış kesif yem ağırlıklı rasyona geçiş yapın. 
-      </p>
-    </div>
-  `;
-}
-
-function _renderHugeActionButtons() {
-  const isMating = _viewMode === 'mating';
-
-  return `
-    <div style="position:relative !important; margin-top:var(--space-2xl); margin-bottom:var(--space-xl); width:calc(100% - var(--space-lg)*2); max-width:440px; margin-left:auto; margin-right:auto; display:flex; gap:12px;">
-      ${isMating ? `
-      <button class="huge-btn btn-primary" id="btn-record-mating" style="width:100%; border-radius:24px; padding:16px; font-size:1.1rem; background:#f97316; box-shadow:0 4px 16px rgba(249,115,22,0.4);">
-        <span class="btn-icon" style="font-size:1.4rem">🔗</span> Aşım Kaydet
-      </button>
-      ` : `
-      <button class="huge-btn btn-primary" id="btn-ultrasound" style="width:100%; border-radius:24px; padding:16px; font-size:1.1rem; background:#a855f7; box-shadow:0 4px 16px rgba(168,85,247,0.4);">
-        <span class="btn-icon" style="font-size:1.4rem">🩺</span> Ultrason Onayı
-      </button>
-      `}
-    </div>
-  `;
-}
-
-// ═══════════════════════════════════════
-// SVG Radar Chart (Pentagon) 
-// ═══════════════════════════════════════
-function _generateRadarChart(dataA, dataB) {
-  const size = 200;
-  const cx = size / 2;
-  const cy = size / 2;
-  const r = 80;
-  
-  const angles = [
-    -Math.PI / 2, 
-    -Math.PI / 2 + (2 * Math.PI) / 5,
-    -Math.PI / 2 + (4 * Math.PI) / 5,
-    -Math.PI / 2 + (6 * Math.PI) / 5,
-    -Math.PI / 2 + (8 * Math.PI) / 5
-  ];
-  
-  const labels = ['Et Kapasitesi', 'Süt Verimi', 'Döl/Fertilite', 'Direnç', 'Büyüme Hızı'];
-
-  const levels = [0.2, 0.4, 0.6, 0.8, 1.0];
-  let bgHtml = '';
-  levels.forEach(l => {
-    const pts = angles.map(a => `${cx + Math.cos(a)*(r*l)},${cy + Math.sin(a)*(r*l)}`).join(' ');
-    bgHtml += `<polygon points="${pts}" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="1"/>`;
+        events.push({
+          icon: m.icon,
+          title: m.title,
+          damLabel,
+          dateLabel: new Date(dateStr).toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' }),
+          daysLabel,
+          urgency,
+          sortDate: msDate
+        });
+      }
+    });
   });
 
-  let axisHtml = '';
-  let labelHtml = '';
-  angles.forEach((a, i) => {
-    const px = cx + Math.cos(a)*r;
-    const py = cy + Math.sin(a)*r;
-    axisHtml += `<line x1="${cx}" y1="${cy}" x2="${px}" y2="${py}" stroke="rgba(255,255,255,0.2)" stroke-width="1"/>`;
-    const lx = cx + Math.cos(a)*(r + 15);
-    const ly = cy + Math.sin(a)*(r + 15);
-    labelHtml += `<text x="${lx}" y="${ly}" fill="var(--text-muted)" font-size="8" text-anchor="middle" dominant-baseline="middle">${labels[i]}</text>`;
-  });
+  // Tarihe göre sırala
+  events.sort((a, b) => a.sortDate - b.sortDate);
+  return events;
+}
 
-  const ptsA = [dataA.meat, dataA.milk, dataA.fertility, dataA.resistance, dataA.growth].map((val, i) => {
-    const l = val / 100;
-    return `${cx + Math.cos(angles[i])*(r*l)},${cy + Math.sin(angles[i])*(r*l)}`;
-  }).join(' ');
-  const polyA = `<polygon points="${ptsA}" fill="var(--accent-green)" fill-opacity="0.3" stroke="var(--accent-green)" stroke-width="2"/>`;
+function _renderRecordsList(records, animals) {
+  if (records.length === 0) {
+    return `
+      <div class="glass-card" style="padding:24px; text-align:center;">
+        <div style="font-size:2.5rem; margin-bottom:8px;">🐑</div>
+        <p style="font-size:0.9rem; color:var(--text-muted);">Henüz kayıtlı eşleşme bulunmuyor.</p>
+        <p style="font-size:0.8rem; color:var(--text-secondary); margin-top:4px;">İlk koç katımınızı kaydetmek için aşağıdaki butonu kullanın.</p>
+      </div>
+    `;
+  }
 
-  const ptsB = [dataB.meat, dataB.milk, dataB.fertility, dataB.resistance, dataB.growth].map((val, i) => {
-    const l = val / 100;
-    return `${cx + Math.cos(angles[i])*(r*l)},${cy + Math.sin(angles[i])*(r*l)}`;
-  }).join(' ');
-  const polyB = `<polygon points="${ptsB}" fill="#f97316" fill-opacity="0.3" stroke="#f97316" stroke-width="2"/>`;
+  return records.map(rec => {
+    const statusColors = {
+      'ACTIVE': { bg: 'rgba(249,115,22,0.12)', border: 'rgba(249,115,22,0.3)', text: '#f97316', label: '🟠 Koç Katımında' },
+      'PREGNANT': { bg: 'rgba(168,85,247,0.12)', border: 'rgba(168,85,247,0.3)', text: '#a855f7', label: '🟣 Gebe' },
+      'COMPLETED': { bg: 'rgba(16,185,129,0.12)', border: 'rgba(16,185,129,0.3)', text: '#10b981', label: '🟢 Tamamlandı' },
+      'FAILED': { bg: 'rgba(239,68,68,0.12)', border: 'rgba(239,68,68,0.3)', text: '#ef4444', label: '🔴 Başarısız' }
+    };
+    const st = statusColors[rec.status] || statusColors['ACTIVE'];
 
-  return `
-    <div style="display:flex; justify-content:center;">
-      <svg width="${size}" height="${size}">
-        ${bgHtml}
-        ${axisHtml}
-        ${polyA}
-        ${polyB}
-        ${labelHtml}
-      </svg>
-    </div>
-  `;
+    const sireLabel = rec.sireIds.join(', ');
+    const damLabel = rec.damIds.length > 2 ? `${rec.damIds.slice(0, 2).join(', ')} +${rec.damIds.length - 2}` : rec.damIds.join(', ');
+    const typeLabel = rec.type === 'GROUP' ? '🐏 Grup Katımı' : '🐑 Bireysel';
+
+    let progressHtml = '';
+    if (rec.status === 'PREGNANT' || rec.status === 'ACTIVE') {
+      const pregInfo = calculateBirthDate(rec.startDate);
+      progressHtml = `
+        <div style="margin-top:8px;">
+          <div style="display:flex; justify-content:space-between; font-size:0.7rem; color:var(--text-muted); margin-bottom:4px;">
+            <span>Gebelik İlerlemesi</span>
+            <span>${pregInfo.daysElapsed}. gün / ${148} gün</span>
+          </div>
+          <div style="height:6px; background:rgba(255,255,255,0.08); border-radius:3px; overflow:hidden;">
+            <div style="height:100%; width:${pregInfo.progressPercent}%; background:linear-gradient(90deg, #f97316, #a855f7); border-radius:3px; transition:width 0.5s;"></div>
+          </div>
+          ${pregInfo.daysLeft <= 30 ? `<div style="font-size:0.7rem; color:#fbbf24; margin-top:4px; font-weight:600;">🐣 Doğuma ${pregInfo.daysLeft} gün kaldı</div>` : ''}
+        </div>
+      `;
+    }
+
+    let birthInfo = '';
+    if (rec.birthRecord) {
+      birthInfo = `
+        <div style="margin-top:8px; padding:8px; background:rgba(16,185,129,0.08); border-radius:8px; font-size:0.75rem; color:var(--text-secondary);">
+          🐣 Doğum: ${rec.birthRecord.date} • ${rec.birthRecord.type} • ${rec.birthRecord.lambCount} yavru
+        </div>
+      `;
+    }
+
+    return `
+      <div class="breeding-record-card" style="border-left:4px solid ${st.text}; background:${st.bg}; border:1px solid ${st.border}; border-radius:16px; padding:14px; margin-bottom:12px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+          <span style="font-size:0.75rem; font-weight:600; color:${st.text};">${st.label}</span>
+          <span style="font-size:0.7rem; color:var(--text-muted);">${typeLabel}</span>
+        </div>
+        <div style="display:flex; gap:16px; font-size:0.85rem;">
+          <div>
+            <span style="font-size:0.7rem; color:var(--text-muted);">Koç</span>
+            <div style="font-weight:600; color:var(--text-primary);">${sireLabel}</div>
+          </div>
+          <div>
+            <span style="font-size:0.7rem; color:var(--text-muted);">Anaç(lar)</span>
+            <div style="font-weight:600; color:var(--text-primary);">${damLabel}</div>
+          </div>
+          <div>
+            <span style="font-size:0.7rem; color:var(--text-muted);">Tarih</span>
+            <div style="font-weight:600; color:var(--text-primary);">${new Date(rec.startDate).toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' })}</div>
+          </div>
+        </div>
+        ${rec.inbreedingWarning ? `<div style="font-size:0.7rem; color:#ef4444; margin-top:6px; font-weight:600;">🚨 ${rec.inbreedingWarning}</div>` : ''}
+        ${progressHtml}
+        ${birthInfo}
+      </div>
+    `;
+  }).join('');
+}
+
+function _rerender() {
+  if (!_container || !_container.parentNode) return;
+  const parent = _container.parentNode;
+  const scrollPos = window.scrollY;
+  parent.innerHTML = '';
+  parent.appendChild(render());
+  init();
+  window.scrollTo(0, scrollPos);
 }

@@ -41,10 +41,17 @@ export function render() {
       </div>
 
       <!-- Box 4 -->
-      <div class="glass-card hub-box" style="display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:var(--space-lg) var(--space-md); opacity:0.6; min-height:140px;">
+      <div id="btn-goto-mortality" class="glass-card hub-box" style="display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:var(--space-lg) var(--space-md); cursor:pointer; min-height:140px; border-color:rgba(239, 68, 68, 0.3); transition:all 0.2s;">
         <span style="font-size:2.5rem; margin-bottom:12px;">📉</span>
         <h4 style="font-size:0.95rem; color:var(--text-primary); margin-bottom:4px;">Ölüm Raporları</h4>
-        <p style="font-size:0.7rem; color:var(--text-muted);">Mortalite analizleri (Yakında)</p>
+        <p style="font-size:0.7rem; color:var(--text-muted);">Mortalite & kayıp analizleri</p>
+      </div>
+
+      <!-- Box 5: Ecza Deposu -->
+      <div id="btn-goto-pharmacy" class="glass-card hub-box" style="display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:var(--space-lg) var(--space-md); cursor:pointer; min-height:140px; border-color:rgba(6, 182, 212, 0.3); transition:all 0.2s; grid-column: span 2;">
+        <span style="font-size:2.5rem; margin-bottom:12px;">🏥</span>
+        <h4 style="font-size:0.95rem; color:var(--text-primary); margin-bottom:4px;">Ecza Deposu & Stok</h4>
+        <p style="font-size:0.7rem; color:var(--text-muted);">İlaç stokları, tedavi geçmişi, karantina</p>
       </div>
 
     </div>
@@ -64,4 +71,10 @@ export function init() {
 
   const btnVaccine = _container.querySelector('#btn-goto-vaccine');
   if (btnVaccine) btnVaccine.addEventListener('click', () => navigateTo('health-vaccines'));
+
+  const btnMortality = _container.querySelector('#btn-goto-mortality');
+  if (btnMortality) btnMortality.addEventListener('click', () => navigateTo('health-mortality'));
+
+  const btnPharmacy = _container.querySelector('#btn-goto-pharmacy');
+  if (btnPharmacy) btnPharmacy.addEventListener('click', () => navigateTo('health-meds'));
 }

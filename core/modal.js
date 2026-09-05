@@ -159,8 +159,14 @@ export function showFormModal(title, fields, icon = '📝') {
     const container = _ensureModalContainer();
     
     const fieldsHTML = fields.map(f => {
+      const val = f.value !== undefined && f.value !== null ? f.value : '';
       if (f.type === 'select') {
-        const opts = (f.options || []).map(o => `<option value="${o}">${o}</option>`).join('');
+        const opts = (f.options || []).map(o => {
+          const optVal = typeof o === 'object' ? o.value : o;
+          const optLabel = typeof o === 'object' ? o.label : o;
+          const isSelected = String(optVal) === String(val) ? 'selected' : '';
+          return `<option value="${optVal}" ${isSelected}>${optLabel}</option>`;
+        }).join('');
         return `
           <div style="margin-bottom:12px; text-align:left;">
             <label style="display:block; font-size:0.8rem; color:var(--text-secondary); margin-bottom:4px;">${f.label}</label>
@@ -171,7 +177,7 @@ export function showFormModal(title, fields, icon = '📝') {
       return `
         <div style="margin-bottom:12px; text-align:left;">
           <label style="display:block; font-size:0.8rem; color:var(--text-secondary); margin-bottom:4px;">${f.label}</label>
-          <input type="${f.type}" id="form_${f.id}" class="c-modal-input" placeholder="${f.placeholder || ''}" style="width:100%; border-radius:8px; padding:10px;"/>
+          <input type="${f.type}" id="form_${f.id}" class="c-modal-input" value="${val}" placeholder="${f.placeholder || ''}" style="width:100%; border-radius:8px; padding:10px;"/>
         </div>
       `;
     }).join('');
@@ -207,7 +213,7 @@ export function showFormModal(title, fields, icon = '📝') {
     // RFID Scan Simulation
     if (btnScan) {
       btnScan.addEventListener('click', () => {
-        const idField = container.querySelector('#form_id');
+        const idField = container.querySelector('#form_id') || container.querySelector('#form_tagID');
         if (idField) {
           idField.value = 'TR-' + Math.floor(Math.random() * 900 + 100);
           btnScan.innerHTML = '✅ Tarandı';

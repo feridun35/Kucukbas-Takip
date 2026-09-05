@@ -1801,3 +1801,411 @@ ul, ol { list-style: none; }
   background: rgba(255, 255, 255, 0.1);
   color: #f8fafc; /* text-primary */
 }
+
+/* ── Auth Module & Multi-Tenant Styles ── */
+.auth-page {
+  animation: pageIn 0.4s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+  min-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.quick-login-btn:hover {
+  transform: translateY(-2px);
+  filter: brightness(1.15);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
+}
+
+.quick-login-btn:active {
+  transform: scale(0.98);
+}
+
+.empty-herd-placeholder {
+  animation: pageIn 0.3s ease-out forwards;
+}
+
+@keyframes bounce {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-8px); }
+}
+
+/* ============================================
+   ShepherdAI — Ecza Deposu & Medikal Tedavi Stilleri
+   ============================================ */
+
+/* ── Arınma Rozetleri (Withdrawal Badges) ── */
+.withdrawal-badge-meat {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 12px;
+  background: rgba(239, 68, 68, 0.15);
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  color: #f87171;
+  font-size: 0.75rem;
+  font-weight: 700;
+  box-shadow: 0 0 12px rgba(239, 68, 68, 0.2);
+}
+
+.withdrawal-badge-milk {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 12px;
+  background: rgba(245, 158, 11, 0.15);
+  border: 1px solid rgba(245, 158, 11, 0.4);
+  color: #fbbf24;
+  font-size: 0.75rem;
+  font-weight: 700;
+  box-shadow: 0 0 12px rgba(245, 158, 11, 0.2);
+}
+
+/* ── Ecza Deposu Stok Kartları ── */
+.pharmacy-card {
+  transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.pharmacy-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(34, 211, 238, 0.4);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+}
+
+.stock-critical-badge {
+  background: rgba(239, 68, 68, 0.2);
+  border: 1px solid rgba(239, 68, 68, 0.5);
+  color: #ef4444;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 0.65rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  animation: pulse 1.5s infinite;
+}
+
+/* ── Medikal Geçmiş Zaman Çizelgesi (Timeline) ── */
+.med-history-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  position: relative;
+  padding-left: 20px;
+}
+
+.med-history-timeline::before {
+  content: '';
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  left: 6px;
+  width: 2px;
+  background: rgba(148, 163, 184, 0.2);
+}
+
+.med-history-item {
+  position: relative;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.4);
+  border: 1px solid rgba(148, 163, 184, 0.1);
+}
+
+.med-history-item::before {
+  content: '💉';
+  position: absolute;
+  left: -20px;
+  top: 10px;
+  font-size: 0.75rem;
+  background: var(--bg-primary);
+  border-radius: 50%;
+}
+
+.med-history-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.med-history-title {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.med-history-date {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+
+/* ── Gebelik Bariyer Uyarısı Box ── */
+.pregnancy-danger-box {
+  background: rgba(239, 68, 68, 0.15);
+  border: 2px solid #ef4444;
+  border-radius: 12px;
+  padding: 14px;
+  margin-bottom: 16px;
+  color: #f87171;
+  box-shadow: 0 0 20px rgba(239, 68, 68, 0.25);
+  animation: alertSlide 0.3s ease-out;
+}
+
+/* ============================================
+   ShepherdAI — Üreme & Islah Modülü Stilleri
+   ============================================ */
+
+/* ── Özet Kartları Grid ── */
+.breeding-summary-cards {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-bottom: var(--space-md);
+}
+
+.breeding-summary-card {
+  background: var(--glass-bg);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  padding: 16px 10px;
+  text-align: center;
+  transition: transform 0.2s ease, border-color 0.2s ease;
+}
+
+.breeding-summary-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(249, 115, 22, 0.3);
+}
+
+.breeding-card-icon {
+  font-size: 1.8rem;
+  margin-bottom: 6px;
+}
+
+.breeding-card-value {
+  font-size: 1.5rem;
+  font-weight: 800;
+  color: var(--text-primary);
+  line-height: 1;
+}
+
+.breeding-card-label {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  margin-top: 4px;
+  font-weight: 500;
+}
+
+/* ── Biyolojik Zaman Çizelgesi ── */
+.breeding-timeline-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  transition: background 0.2s ease;
+}
+
+.breeding-timeline-item:last-child {
+  border-bottom: none;
+}
+
+.breeding-timeline-item:hover {
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 8px;
+}
+
+.breeding-timeline-icon {
+  font-size: 1.3rem;
+  flex-shrink: 0;
+  width: 32px;
+  text-align: center;
+}
+
+.breeding-timeline-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.breeding-timeline-title {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.breeding-timeline-meta {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.breeding-timeline-badge {
+  flex-shrink: 0;
+  font-size: 0.68rem;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 8px;
+  white-space: nowrap;
+}
+
+.breeding-timeline-badge.normal {
+  background: rgba(100, 116, 139, 0.15);
+  color: var(--text-muted);
+}
+
+.breeding-timeline-badge.soon {
+  background: rgba(251, 191, 36, 0.15);
+  color: #fbbf24;
+  border: 1px solid rgba(251, 191, 36, 0.3);
+  animation: pulse 2s infinite;
+}
+
+.breeding-timeline-badge.today {
+  background: rgba(249, 115, 22, 0.2);
+  color: #f97316;
+  border: 1px solid rgba(249, 115, 22, 0.4);
+  font-weight: 800;
+}
+
+.breeding-timeline-badge.overdue {
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+/* ── Milestone Göstergesi (Hayvan Profili) ── */
+.breeding-milestone {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+  transition: background 0.2s ease;
+}
+
+.breeding-milestone:last-child {
+  border-bottom: none;
+}
+
+.breeding-milestone.done {
+  opacity: 0.65;
+}
+
+.breeding-milestone.today {
+  background: rgba(249, 115, 22, 0.08);
+  border: 1px solid rgba(249, 115, 22, 0.25);
+}
+
+.breeding-milestone.soon {
+  background: rgba(251, 191, 36, 0.06);
+}
+
+.breeding-milestone-icon {
+  font-size: 1.2rem;
+  flex-shrink: 0;
+  width: 28px;
+  text-align: center;
+}
+
+.breeding-milestone-info {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ── Eşleşme Kayıt Kartları ── */
+.breeding-record-card {
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.breeding-record-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+}
+
+/* ── Modal Sekme Butonları ── */
+.breeding-modal-tab {
+  transition: all 0.2s ease;
+}
+
+.breeding-modal-tab:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+/* ── Akrabalık Uyarı Kutusu ── */
+.breeding-inbreeding-alert {
+  animation: alertSlide 0.3s ease-out;
+}
+
+/* ============================================
+   ShepherdAI — Görev Zaman Filtresi & Overdue Stilleri
+   ============================================ */
+
+.task-filter-chips {
+  display: flex;
+  gap: 8px;
+  margin: 12px 0 16px 0;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.task-filter-chips .chip-btn {
+  padding: 8px 16px;
+  border-radius: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--glass-bg, rgba(255, 255, 255, 0.05));
+  color: var(--text-muted, #94a3b8);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.2s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.task-filter-chips .chip-btn:hover:not(.active) {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text-primary, #f8fafc);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.task-filter-chips .chip-btn.active {
+  background: var(--accent-blue, #3b82f6);
+  color: #ffffff;
+  border-color: var(--accent-blue, #3b82f6);
+  box-shadow: 0 4px 14px rgba(59, 130, 246, 0.35);
+}
+
+.task-card.overdue-task {
+  border-left: 4px solid var(--danger-red, #ef4444) !important;
+  background: linear-gradient(135deg, rgba(239, 68, 68, 0.08) 0%, var(--glass-bg, rgba(255, 255, 255, 0.03)) 100%) !important;
+  box-shadow: 0 4px 16px rgba(239, 68, 68, 0.15);
+}
+
+.badge-overdue {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(239, 68, 68, 0.2);
+  color: var(--danger-red, #ef4444);
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-weight: 700;
+  font-size: 0.65rem;
+  margin-left: 6px;
+  animation: pulseOverdue 2s infinite ease-in-out;
+}
+
+@keyframes pulseOverdue {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+
