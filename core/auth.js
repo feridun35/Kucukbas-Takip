@@ -1,61 +1,92 @@
 /**
  * ShepherdAI — Kimlik Doğrulama ve Kullanıcı Oturum Yönetimi (Authentication)
- * Multi-tenant oturumları, yerel kullanıcı kayıtlarını ve Demo / Sıfır Çiftlik hesaplarını yönetir.
+ * Multi-tenant oturumları, Supabase bulut senkronizasyonlu kullanıcı kayıtlarını ve Admin Demo hesabını yönetir.
  */
 
 import { loadTenantState, clearTenantState, initNewTenantState } from './state.js';
 import { navigateTo } from './router.js';
+import { pushLocalStateToCloud, pullCloudStateToLocal } from './syncManager.js';
 
-// Sabit Varsayılan Hesaplar
+// Admin / Demo Varsayılan Hesabı (10 Hayvanlı Örnek Çiftlik)
 export const DEFAULT_ACCOUNTS = {
   DEMO: {
     id: 'demo',
-    email: 'demo@shepherdai.com',
-    password: 'demo',
-    farmName: 'Bereket Yaylası Çiftliği',
-    ownerName: 'Feridun Bey',
+    email: 'admin@shepherdai.com',
+    username: 'admin',
+    password: 'admin',
+    farmName: 'Bereket Yaylası Çiftliği (Admin Demo)',
+    ownerName: 'Admin Yöneticisi',
     role: 'owner',
     storageKey: 'shepherd_data_demo',
     isDemo: true,
     createdAt: '2026-01-01'
-  },
-  ZERO: {
-    id: 'zero_farm',
-    email: 'sifir@shepherdai.com',
-    password: 'sifir',
-    farmName: 'Doğal Vadi Çiftliği',
-    ownerName: 'Yeni İşletmeci',
-    role: 'owner',
-    storageKey: 'shepherd_data_zero',
-    isDemo: false,
-    createdAt: '2026-03-01'
   }
 };
 
 const CURRENT_USER_KEY = 'shepherd_current_user';
 const USERS_REGISTRY_KEY = 'shepherd_users_registry';
+const GLOBAL_USERS_SYNC_KEY = 'shepherd_global_users_registry';
 
 /**
- * Kayıtlı kullanıcıları getirir (varsayılan hesaplar otomatik eklenir)
+ * Supabase bulutundaki kullanıcı kaydını çekip yerel kullanıcı listesi ile birleştirir
+ */
+export async function syncUsersFromCloud() {
+  try {
+    const cloudUsers = await pullCloudStateToLocal(GLOBAL_USERS_SYNC_KEY);
+    if (Array.isArray(cloudUsers) && cloudUsers.length > 0) {
+      const localUsers = getRegisteredUsers();
+      const mergedMap = new Map();
+
+      // Önce yerel kullanıcıları ekle
+      localUsers.forEach(u => {
+        const key = u.id || u.email;
+        if (key) mergedMap.set(key, u);
+      });
+
+      // Buluttan gelen kullanıcıları ekle/güncelle
+      cloudUsers.forEach(u => {
+        const key = u.id || u.email;
+        if (key) mergedMap.set(key, u);
+      });
+
+      const mergedList = Array.from(mergedMap.values());
+      localStorage.setItem(USERS_REGISTRY_KEY, JSON.stringify(mergedList));
+      return mergedList;
+    }
+  } catch (e) {
+    console.error('[Auth] syncUsersFromCloud hatası:', e);
+  }
+  return getRegisteredUsers();
+}
+
+/**
+ * Kullanıcı listesini Supabase bulutuna yedekler (Cihazlar arası hesap senkronizasyonu için)
+ */
+export function pushUsersToCloud(usersList) {
+  try {
+    pushLocalStateToCloud(GLOBAL_USERS_SYNC_KEY, usersList, 300);
+  } catch (e) {
+    console.error('[Auth] pushUsersToCloud hatası:', e);
+  }
+}
+
+/**
+ * Kayıtlı kullanıcıları getirir (Admin hesabı otomatik dahil edilir)
  */
 export function getRegisteredUsers() {
   try {
     const raw = localStorage.getItem(USERS_REGISTRY_KEY);
     if (!raw) {
-      const initialUsers = [DEFAULT_ACCOUNTS.DEMO, DEFAULT_ACCOUNTS.ZERO];
+      const initialUsers = [DEFAULT_ACCOUNTS.DEMO];
       localStorage.setItem(USERS_REGISTRY_KEY, JSON.stringify(initialUsers));
       return initialUsers;
     }
     const users = JSON.parse(raw);
     
-    // Varsayılan hesapların registry'de olduğundan emin ol
+    // Admin hesabının registry'de olduğundan emin ol
     let updated = false;
     if (!users.some(u => u.id === DEFAULT_ACCOUNTS.DEMO.id)) {
       users.unshift(DEFAULT_ACCOUNTS.DEMO);
-      updated = true;
-    }
-    if (!users.some(u => u.id === DEFAULT_ACCOUNTS.ZERO.id)) {
-      users.splice(1, 0, DEFAULT_ACCOUNTS.ZERO);
       updated = true;
     }
     if (updated) {
@@ -64,7 +95,7 @@ export function getRegisteredUsers() {
     return users;
   } catch (e) {
     console.error('[Auth] getRegisteredUsers error:', e);
-    return [DEFAULT_ACCOUNTS.DEMO, DEFAULT_ACCOUNTS.ZERO];
+    return [DEFAULT_ACCOUNTS.DEMO];
   }
 }
 
@@ -92,27 +123,41 @@ export function isAuthenticated() {
 }
 
 /**
- * Kullanıcı Girişi (Email ve Şifre ile)
- * @param {string} email 
+ * Kullanıcı Girişi (E-Posta / Kullanıcı Adı ve Şifre ile)
+ * @param {string} emailOrUsername 
  * @param {string} password 
- * @returns {{success: boolean, message?: string, user?: Object}}
+ * @returns {Promise<{success: boolean, message?: string, user?: Object}>}
  */
-export function login(email, password) {
-  if (!email || !password) {
-    return { success: false, message: 'Lütfen e-posta ve şifrenizi giriniz.' };
+export async function login(emailOrUsername, password) {
+  if (!emailOrUsername || !password) {
+    return { success: false, message: 'Lütfen e-posta / kullanıcı adı ve şifrenizi giriniz.' };
   }
 
-  const cleanEmail = email.trim().toLowerCase();
+  const cleanInput = emailOrUsername.trim().toLowerCase();
   const cleanPassword = password.trim();
 
-  const users = getRegisteredUsers();
-  const foundUser = users.find(u => 
-    u.email.toLowerCase() === cleanEmail && 
-    (u.password === cleanPassword || (u.id === 'demo' && cleanPassword === 'demo123') || (u.id === 'zero_farm' && cleanPassword === 'sifir123'))
-  );
+  // Admin (10 Hayvanlı Demo Hesabı) Özel Kontrolü
+  if (
+    (cleanInput === 'admin' || cleanInput === 'admin@shepherdai.com' || cleanInput === 'demo' || cleanInput === 'demo@shepherdai.com') &&
+    (cleanPassword === 'admin' || cleanPassword === 'admin123' || cleanPassword === 'demo' || cleanPassword === 'demo123')
+  ) {
+    const adminUser = DEFAULT_ACCOUNTS.DEMO;
+    _setCurrentUser(adminUser);
+    loadTenantState(adminUser);
+    return { success: true, user: adminUser };
+  }
+
+  let users = getRegisteredUsers();
+  let foundUser = _findUser(users, cleanInput, cleanPassword);
+
+  // Yerel veride bulunamadıysa Supabase bulutundan kullanıcı kaydını güncelleip tekrar dene (Çoklu Cihaz Desteği)
+  if (!foundUser && navigator.onLine) {
+    users = await syncUsersFromCloud();
+    foundUser = _findUser(users, cleanInput, cleanPassword);
+  }
 
   if (!foundUser) {
-    return { success: false, message: 'E-posta veya şifre hatalı. Lütfen kontrol edip tekrar deneyin.' };
+    return { success: false, message: 'Giriş bilgileri hatalı veya hesabınıza ulaşılamadı. Lütfen e-posta ve şifrenizi kontrol edin.' };
   }
 
   _setCurrentUser(foundUser);
@@ -120,8 +165,19 @@ export function login(email, password) {
   return { success: true, user: foundUser };
 }
 
+function _findUser(users, cleanInput, cleanPassword) {
+  return users.find(u => 
+    (
+      (u.email && u.email.toLowerCase() === cleanInput) ||
+      (u.username && u.username.toLowerCase() === cleanInput) ||
+      (u.id === cleanInput)
+    ) &&
+    u.password === cleanPassword
+  );
+}
+
 /**
- * Demo Hesabı ile Tek Tıkla Hızlı Giriş
+ * Admin Hesabı ile Hızlı Giriş
  */
 export function loginAsDemo() {
   const demoUser = DEFAULT_ACCOUNTS.DEMO;
@@ -131,27 +187,17 @@ export function loginAsDemo() {
 }
 
 /**
- * Sıfır Çiftlik (Gerçek İşletme) Hesabı ile Tek Tıkla Hızlı Giriş
- */
-export function loginAsZero() {
-  const zeroUser = DEFAULT_ACCOUNTS.ZERO;
-  _setCurrentUser(zeroUser);
-  loadTenantState(zeroUser);
-  return { success: true, user: zeroUser };
-}
-
-/**
  * Yeni Çiftlik / Kullanıcı Kaydı Oluşturma
  * @param {Object} formData - { farmName, ownerName, email, password, role }
  */
-export function registerUser({ farmName, ownerName, email, password, role = 'owner' }) {
+export async function registerUser({ farmName, ownerName, email, password, role = 'owner' }) {
   if (!farmName || !farmName.trim()) {
     return { success: false, message: 'Lütfen çiftlik adını belirtiniz.' };
   }
   if (!ownerName || !ownerName.trim()) {
     return { success: false, message: 'Lütfen adınızı ve soyadınızı belirtiniz.' };
   }
-  if (!email || !email.trim() || !email.includes('@')) {
+  if (!email || !email.trim() || (!email.includes('@') && email.trim().toLowerCase() !== 'admin')) {
     return { success: false, message: 'Lütfen geçerli bir e-posta adresi giriniz.' };
   }
   if (!password || password.trim().length < 4) {
@@ -159,9 +205,11 @@ export function registerUser({ farmName, ownerName, email, password, role = 'own
   }
 
   const cleanEmail = email.trim().toLowerCase();
-  const users = getRegisteredUsers();
 
-  if (users.some(u => u.email.toLowerCase() === cleanEmail)) {
+  // Önce buluttan güncel kullanıcı listesini çek ki e-posta çakışması doğru kontrol edilsin
+  const users = await syncUsersFromCloud();
+
+  if (users.some(u => u.email && u.email.toLowerCase() === cleanEmail)) {
     return { success: false, message: 'Bu e-posta adresiyle kayıtlı bir hesap zaten mevcut.' };
   }
 
@@ -184,6 +232,9 @@ export function registerUser({ farmName, ownerName, email, password, role = 'own
   } catch (e) {
     console.error('[Auth] Error saving new user:', e);
   }
+
+  // Kullanıcı listesini Supabase bulutuna gönder (PC ve Mobil senkronizasyonu için)
+  pushUsersToCloud(users);
 
   // Yeni kiracı için boş state oluştur ve aktif oturumu ayarla
   _setCurrentUser(newUser);
@@ -219,6 +270,7 @@ export function updateCurrentUser(updatedFields) {
   const users = getRegisteredUsers().map(u => u.id === updatedUser.id ? updatedUser : u);
   try {
     localStorage.setItem(USERS_REGISTRY_KEY, JSON.stringify(users));
+    pushUsersToCloud(users);
   } catch (e) {}
 
   return updatedUser;

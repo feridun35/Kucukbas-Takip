@@ -1,9 +1,9 @@
 /**
  * ShepherdAI — Kimlik Doğrulama ve Giriş/Kayıt Ekranı (modules/auth.js)
- * Glassmorphism temalı, mobil ergonomik Giriş, Kayıt ve Hızlı Demo/Sıfır Çiftlik paneli.
+ * Glassmorphism temalı, mobil ergonomik Giriş ve Kayıt paneli.
  */
 
-import { login, registerUser, loginAsDemo, loginAsZero } from '../core/auth.js';
+import { login, registerUser } from '../core/auth.js';
 import { navigateTo } from '../core/router.js';
 import { showAlert } from '../core/modal.js';
 
@@ -40,47 +40,16 @@ function _renderContent() {
       </p>
     </div>
 
-    <!-- Quick Access (Hızlı Başlatma Kartları) -->
-    <div style="padding:0 var(--space-md); margin-bottom:var(--space-lg);">
-      <div class="glass-card" style="padding:var(--space-md); border-color:rgba(34, 197, 94, 0.3); background:rgba(34, 197, 94, 0.04);">
-        <div style="font-size:0.75rem; text-transform:uppercase; font-weight:700; color:var(--accent-green); letter-spacing:1px; margin-bottom:10px; display:flex; align-items:center; gap:6px;">
-          <span>⚡</span> Hızlı Erişim (Tek Tıkla Giriş)
-        </div>
-
-        <div style="display:grid; grid-template-columns:1fr; gap:10px;">
-          <!-- Demo Buton -->
-          <button id="btn-quick-demo" class="quick-login-btn" style="display:flex; align-items:center; gap:12px; width:100%; padding:12px 14px; border-radius:14px; background:linear-gradient(135deg, rgba(59, 130, 246, 0.15), rgba(34, 197, 94, 0.15)); border:1px solid rgba(59, 130, 246, 0.35); color:#fff; text-align:left; cursor:pointer; transition:all 0.2s;">
-            <span style="font-size:1.6rem; display:flex; align-items:center; justify-content:center; width:40px; height:40px; border-radius:10px; background:rgba(59, 130, 246, 0.2);">🐑</span>
-            <div style="flex:1; min-width:0;">
-              <div style="font-weight:700; font-size:0.95rem; color:#fff;">Demo Hesabı ile Devam Et</div>
-              <div style="font-size:0.75rem; color:rgba(255,255,255,0.7);">10 Hayvan, Görevler & Finansal Veriler</div>
-            </div>
-            <span style="color:var(--accent-green); font-size:1.1rem; font-weight:bold;">➔</span>
-          </button>
-
-          <!-- Sıfır Çiftlik Buton -->
-          <button id="btn-quick-zero" class="quick-login-btn" style="display:flex; align-items:center; gap:12px; width:100%; padding:12px 14px; border-radius:14px; background:rgba(255, 255, 255, 0.04); border:1px solid rgba(255, 255, 255, 0.12); color:#fff; text-align:left; cursor:pointer; transition:all 0.2s;">
-            <span style="font-size:1.6rem; display:flex; align-items:center; justify-content:center; width:40px; height:40px; border-radius:10px; background:rgba(255, 255, 255, 0.08);">🏡</span>
-            <div style="flex:1; min-width:0;">
-              <div style="font-weight:700; font-size:0.95rem; color:#fff;">Sıfır Çiftlik Hesabı (Yeni Başlangıç)</div>
-              <div style="font-size:0.75rem; color:var(--text-muted);">Gerçek işletme için boş / temiz panel</div>
-            </div>
-            <span style="color:var(--text-muted); font-size:1.1rem; font-weight:bold;">➔</span>
-          </button>
-        </div>
-      </div>
-    </div>
-
     <!-- Main Auth Card (Login & Register Tabs) -->
     <div style="padding:0 var(--space-md);">
       <div class="glass-card" style="padding:var(--space-lg); border-radius:24px; box-shadow:0 12px 40px rgba(0,0,0,0.4);">
         
         <!-- Tab Selector -->
         <div style="display:flex; background:rgba(0,0,0,0.3); padding:4px; border-radius:14px; margin-bottom:var(--space-lg);">
-          <button id="tab-login" style="flex:1; padding:12px; border-radius:10px; font-weight:700; font-size:0.95rem; transition:all 0.25s; cursor:pointer; background:${_activeTab === 'login' ? 'var(--accent-green)' : 'transparent'}; color:${_activeTab === 'login' ? '#000' : 'var(--text-secondary)'};">
+          <button id="tab-login" type="button" style="flex:1; padding:12px; border-radius:10px; font-weight:700; font-size:0.95rem; transition:all 0.25s; cursor:pointer; background:${_activeTab === 'login' ? 'var(--accent-green)' : 'transparent'}; color:${_activeTab === 'login' ? '#000' : 'var(--text-secondary)'};">
             Giriş Yap
           </button>
-          <button id="tab-register" style="flex:1; padding:12px; border-radius:10px; font-weight:700; font-size:0.95rem; transition:all 0.25s; cursor:pointer; background:${_activeTab === 'register' ? 'var(--accent-green)' : 'transparent'}; color:${_activeTab === 'register' ? '#000' : 'var(--text-secondary)'};">
+          <button id="tab-register" type="button" style="flex:1; padding:12px; border-radius:10px; font-weight:700; font-size:0.95rem; transition:all 0.25s; cursor:pointer; background:${_activeTab === 'register' ? 'var(--accent-green)' : 'transparent'}; color:${_activeTab === 'register' ? '#000' : 'var(--text-secondary)'};">
             Kayıt Ol
           </button>
         </div>
@@ -100,11 +69,11 @@ function _renderLoginForm() {
     <form id="form-login" onsubmit="return false;" style="display:flex; flex-direction:column; gap:16px;">
       <div>
         <label style="display:block; font-size:0.85rem; font-weight:600; color:var(--text-secondary); margin-bottom:6px;">
-          E-Posta Adresi
+          E-Posta Adresi veya Kullanıcı Adı
         </label>
         <div style="position:relative;">
-          <span style="position:absolute; left:14px; top:50%; transform:translateY(-50%); font-size:1.1rem; opacity:0.6;">✉️</span>
-          <input type="email" id="login-email" placeholder="ornek@shepherdai.com" value="demo@shepherdai.com"
+          <span style="position:absolute; left:14px; top:50%; transform:translateY(-50%); font-size:1.1rem; opacity:0.6;">👤</span>
+          <input type="text" id="login-email" placeholder="admin veya e-posta adresiniz" value="admin"
                  style="width:100%; box-sizing:border-box; padding:14px 14px 14px 44px; border-radius:14px; background:rgba(255,255,255,0.06); border:1px solid var(--glass-border); color:var(--text-primary); font-size:1rem; font-family:inherit; outline:none; transition:border-color 0.2s;">
         </div>
       </div>
@@ -115,16 +84,16 @@ function _renderLoginForm() {
         </label>
         <div style="position:relative;">
           <span style="position:absolute; left:14px; top:50%; transform:translateY(-50%); font-size:1.1rem; opacity:0.6;">🔒</span>
-          <input type="password" id="login-password" placeholder="••••••••" value="demo"
+          <input type="password" id="login-password" placeholder="••••••••" value="admin"
                  style="width:100%; box-sizing:border-box; padding:14px 14px 14px 44px; border-radius:14px; background:rgba(255,255,255,0.06); border:1px solid var(--glass-border); color:var(--text-primary); font-size:1rem; font-family:inherit; outline:none; transition:border-color 0.2s;">
         </div>
       </div>
 
-      <div style="font-size:0.75rem; color:var(--text-muted); line-height:1.4;">
-        💡 <b>İpucu:</b> Demo için <code>demo@shepherdai.com</code> / <code>demo</code>, Sıfır Çiftlik için <code>sifir@shepherdai.com</code> / <code>sifir</code>
+      <div style="font-size:0.8rem; background:rgba(34, 197, 94, 0.08); border:1px solid rgba(34, 197, 94, 0.2); padding:10px 12px; border-radius:12px; color:var(--text-secondary); line-height:1.4;">
+        👑 <b>Admin Hesabı:</b> <code>admin</code> / <code>admin</code> (10 Hayvanlı Örnek Çiftlik)
       </div>
 
-      <button type="submit" id="btn-submit-login" class="btn-primary" style="width:100%; padding:16px; border-radius:16px; font-size:1.05rem; font-weight:700; margin-top:8px; box-shadow:0 4px 20px rgba(34,197,94,0.3);">
+      <button type="submit" id="btn-submit-login" class="btn-primary" style="width:100%; padding:16px; border-radius:16px; font-size:1.05rem; font-weight:700; margin-top:4px; box-shadow:0 4px 20px rgba(34,197,94,0.3);">
         Oturum Aç ➔
       </button>
     </form>
@@ -179,7 +148,7 @@ function _renderRegisterForm() {
       </div>
 
       <div style="font-size:0.75rem; color:var(--text-muted); line-height:1.4;">
-        ✨ Yeni çiftlik profiliniz izole bir yerel veritabanı ile sıfır veriyle başlatılacaktır.
+        ☁️ Çiftlik verileriniz ve hesabınız tüm cihazlarınız (PC & Mobil) arasında Supabase bulut ile otomatik senkronize edilecektir.
       </div>
 
       <button type="submit" id="btn-submit-register" class="btn-primary" style="width:100%; padding:16px; border-radius:16px; font-size:1.05rem; font-weight:700; margin-top:8px; box-shadow:0 4px 20px rgba(34,197,94,0.3);">
@@ -208,30 +177,6 @@ function _attachEvents() {
     });
   }
 
-  // Quick Demo Login
-  const btnQuickDemo = _container.querySelector('#btn-quick-demo');
-  if (btnQuickDemo) {
-    btnQuickDemo.addEventListener('click', async () => {
-      const res = loginAsDemo();
-      if (res.success) {
-        await showAlert('Demo Hesabı Açıldı', `Hoş geldiniz, ${res.user.ownerName}. Zengin örnek sürü ve finans verileri yüklendi.`, '🐑');
-        navigateTo('dashboard');
-      }
-    });
-  }
-
-  // Quick Zero Farm Login
-  const btnQuickZero = _container.querySelector('#btn-quick-zero');
-  if (btnQuickZero) {
-    btnQuickZero.addEventListener('click', async () => {
-      const res = loginAsZero();
-      if (res.success) {
-        await showAlert('Sıfır Çiftlik Açıldı', `Hoş geldiniz, ${res.user.ownerName}. Gerçek işletmeniz için temiz paneliniz hazır.`, '🏡');
-        navigateTo('dashboard');
-      }
-    });
-  }
-
   // Form Submit Login
   const formLogin = _container.querySelector('#form-login');
   if (formLogin) {
@@ -240,12 +185,22 @@ function _attachEvents() {
       const email = _container.querySelector('#login-email')?.value || '';
       const password = _container.querySelector('#login-password')?.value || '';
 
-      const res = login(email, password);
+      const submitBtn = _container.querySelector('#btn-submit-login');
+      if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.innerText = 'Kontrol Ediliyor...';
+      }
+
+      const res = await login(email, password);
       if (res.success) {
         await showAlert('Giriş Başarılı', `Hoş geldiniz, ${res.user.ownerName} (${res.user.farmName})`, '✅');
         navigateTo('dashboard');
       } else {
         await showAlert('Giriş Yapılamadı', res.message, '⚠️');
+        if (submitBtn) {
+          submitBtn.disabled = false;
+          submitBtn.innerText = 'Oturum Aç ➔';
+        }
       }
     });
   }
@@ -260,12 +215,22 @@ function _attachEvents() {
       const email = _container.querySelector('#reg-email')?.value || '';
       const password = _container.querySelector('#reg-password')?.value || '';
 
-      const res = registerUser({ farmName, ownerName, email, password });
+      const submitBtn = _container.querySelector('#btn-submit-register');
+      if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.innerText = 'Hesap Oluşturuluyor...';
+      }
+
+      const res = await registerUser({ farmName, ownerName, email, password });
       if (res.success) {
-        await showAlert('Kayıt Tamamlandı', `Tebrikler! ${res.user.farmName} çiftliğiniz oluşturuldu. Şimdi ilk hayvanlarınızı ekleyebilirsiniz.`, '🎉');
+        await showAlert('Kayıt Tamamlandı', `Tebrikler! ${res.user.farmName} çiftliğiniz oluşturuldu ve bulut senkronizasyonu kuruldu.`, '🎉');
         navigateTo('dashboard');
       } else {
         await showAlert('Kayıt Başarısız', res.message, '⚠️');
+        if (submitBtn) {
+          submitBtn.disabled = false;
+          submitBtn.innerText = 'Çiftliğimi Oluştur & Başla ➔';
+        }
       }
     });
   }
