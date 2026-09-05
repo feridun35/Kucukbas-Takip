@@ -3,6 +3,7 @@
  */
 
 import { navigateTo } from '../core/router.js';
+import { onSyncStatusChange } from '../core/syncManager.js';
 
 const navItems = [
   {
@@ -68,12 +69,30 @@ export function renderNavBar() {
   const nav = document.getElementById('nav-bar');
   if (!nav) return;
 
-  nav.innerHTML = navItems.map(item => `
-    <button class="nav-btn" data-route="${item.route}" aria-label="${item.label}">
-      ${item.icon}
-      <span>${item.label}</span>
-    </button>
-  `).join('');
+  nav.innerHTML = `
+    <div id="sync-badge" class="sync-badge status-offline" title="Senkronizasyon Durumu">
+      <span class="sync-dot">⚪</span>
+      <span class="sync-text">Çevrimdışı</span>
+    </div>
+    ${navItems.map(item => `
+      <button class="nav-btn" data-route="${item.route}" aria-label="${item.label}">
+        ${item.icon}
+        <span>${item.label}</span>
+      </button>
+    `).join('')}
+  `;
+
+  // Sync durum güncellemelerini dinle
+  onSyncStatusChange((statusInfo) => {
+    const badge = document.getElementById('sync-badge');
+    if (badge) {
+      badge.className = `sync-badge status-${statusInfo.status}`;
+      badge.innerHTML = `
+        <span class="sync-dot">${statusInfo.icon}</span>
+        <span class="sync-text">${statusInfo.text}</span>
+      `;
+    }
+  });
 
   // Event delegation
   nav.addEventListener('click', (e) => {

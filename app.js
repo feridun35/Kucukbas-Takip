@@ -7,6 +7,7 @@ import { registerRoute, initRouter, navigateTo } from './core/router.js';
 import { setState, loadTenantState } from './core/state.js';
 import { getCurrentUser, isAuthenticated } from './core/auth.js';
 import { startSensorPolling } from './core/sensors.js';
+import { initSyncManager } from './core/syncManager.js';
 import { renderNavBar } from './modules/navigation.js';
 
 // Modüller
@@ -33,6 +34,9 @@ import * as Breeding from './modules/breeding.js';
  */
 function initApp() {
   console.log('🐑 ShepherdAI v1.1 başlatılıyor…');
+
+  // Bulut senkronizasyon yöneticisini başlat
+  initSyncManager();
 
   // Aktif oturum varsa ilgili kiracının (tenant) izole verisini yükle
   if (isAuthenticated()) {

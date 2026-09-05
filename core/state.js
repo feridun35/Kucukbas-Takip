@@ -14,6 +14,7 @@ import {
   mockTasks
 } from '../data/mock-data.js';
 import { syncHerdMathState } from './herdMathEngine.js';
+import { pushLocalStateToCloud, pullCloudStateToLocal } from './syncManager.js';
 
 // Varsayılan boş state şablonu
 const EMPTY_STATE_TEMPLATE = {
@@ -302,7 +303,7 @@ export function getInitialBlankState(user) {
 }
 
 /**
- * Kiracının (Tenant) verisini LocalStorage'dan yükler veya sıfırdan kurar
+ * Kiracının (Tenant) verisini LocalStorage'dan yükler ve Supabase ile eşitlemeyi tetikler
  * @param {Object} user - Aktif kullanıcı objesi
  */
 export function loadTenantState(user) {
@@ -318,7 +319,7 @@ export function loadTenantState(user) {
   try {
     const rawData = localStorage.getItem(user.storageKey);
     if (rawData) {
-      // Daha önce kaydedilmiş veri varsa onu yükle
+      // Daha önce kaydedilmiş yerel veri varsa onu yükle
       const parsed = JSON.parse(rawData);
       Object.keys(parsed).forEach(k => {
         AppState[k] = parsed[k];
@@ -339,6 +340,50 @@ export function loadTenantState(user) {
     }
   } catch (e) {
     console.error('[State] Error loading tenant state:', e);
+  }
+
+  _notifySubscribers();
+
+  // Bulut Verisini Çek ve Eşitle (Arka planda asenkron)
+  pullCloudStateToLocal(user.storageKey).then(cloudPayload => {
+    if (cloudPayload && typeof cloudPayload === 'object' && Object.keys(cloudPayload).length > 0) {
+      console.log('[State] ☁️ Buluttan gelen veri yerel state ile eşitleniyor...');
+      applyCloudState(cloudPayload);
+    } else {
+      // Bulutta kayıt yoksa mevcut yerel veriyi buluta gönder
+      _persistTenantState();
+    }
+  }).catch(err => {
+    console.error('[State] Cloud pull error:', err);
+  });
+}
+
+/**
+ * Buluttan gelen state yükünü mevcut AppState'e uygular
+ */
+export function applyCloudState(cloudPayload) {
+  if (!cloudPayload || typeof cloudPayload !== 'object') return;
+
+  Object.keys(cloudPayload).forEach(k => {
+    if (k !== 'currentPage' && k !== 'currentUser' && k !== 'currentTenantKey') {
+      AppState[k] = cloudPayload[k];
+    }
+  });
+
+  syncHerdMathState(AppState);
+
+  if (AppState.currentTenantKey) {
+    try {
+      const dataToSave = {};
+      Object.keys(AppState).forEach(key => {
+        if (key !== 'currentPage' && key !== 'currentUser' && key !== 'currentTenantKey') {
+          dataToSave[key] = AppState[key];
+        }
+      });
+      localStorage.setItem(AppState.currentTenantKey, JSON.stringify(dataToSave));
+    } catch (e) {
+      console.error('[State] Error saving applied cloud state to localStorage:', e);
+    }
   }
 
   _notifySubscribers();
@@ -368,6 +413,7 @@ export function initNewTenantState(user) {
   }
 
   _notifySubscribers();
+  _persistTenantState();
 }
 
 /**
@@ -420,6 +466,9 @@ function _persistTenantState() {
 
     localStorage.setItem(tenantKey, JSON.stringify(dataToSave));
     console.log(`[Storage] ✅ Durum '${tenantKey}' anahtarına başarıyla kaydedildi.`);
+
+    // Supabase bulut senkronizasyonu tetikle (debounced)
+    pushLocalStateToCloud(tenantKey, dataToSave);
   } catch (e) {
     console.error('[State] Error persisting tenant state:', e);
   }
