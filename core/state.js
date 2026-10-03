@@ -179,6 +179,33 @@ export function getAnimalById(id) {
 }
 
 /**
+ * Demo hayvanlarına damızlık skorunun hesaplanabileceği kayıtları ekler (bugüne göre göreli tarihler):
+ * doğum tarihleri, TR-045 × TR-210 ikizlerinin (TR-004, TR-005) doğum ağırlığı ve tartımları.
+ */
+function _withDemoPerformanceData(animals) {
+  const d = (n) => addDaysIso(todayIso(), n);
+  const extras = {
+    'TR-102': { birthDate: d(-1100) },
+    'TR-088': { birthDate: d(-1000) },
+    'TR-210': { birthDate: d(-1500) },
+    'TR-045': { birthDate: d(-1300) },
+    'TR-099': { birthDate: d(-2000) },
+    'TR-301': { birthDate: d(-1200) },
+    'TR-112': { birthDate: d(-900) },
+    'TR-115': { birthDate: d(-800) },
+    'TR-004': { birthDate: d(-120), birthWeight: 4.1, mother: 'TR-045', father: 'TR-210',
+      weightHistory: [{ date: d(-75), weight: 13.2 }, { date: d(-30), weight: 23.6 }, { date: d(-5), weight: 28.5 }] },
+    'TR-005': { birthDate: d(-120), birthWeight: 4.6, mother: 'TR-045', father: 'TR-210',
+      weightHistory: [{ date: d(-75), weight: 15.0 }, { date: d(-30), weight: 27.1 }, { date: d(-5), weight: 32.0 }] }
+  };
+  return animals.map(a => ({
+    weightHistory: a.weight ? [{ date: d(-5), weight: a.weight }] : [],
+    ...a,
+    ...(extras[a.id] || {})
+  }));
+}
+
+/**
  * Demo hesabı için zengin başlangıç verisi üretir
  */
 export function getInitialDemoState() {
@@ -192,7 +219,7 @@ export function getInitialDemoState() {
     healthSummary: JSON.parse(JSON.stringify(mockHealthData)),
     financeSummary: JSON.parse(JSON.stringify(mockFinanceData)),
     alerts: [], // Bildirimler kayıtlı veriden üretilir (core/alertsEngine.js)
-    animals: JSON.parse(JSON.stringify(animalsArray)),
+    animals: _withDemoPerformanceData(JSON.parse(JSON.stringify(animalsArray))),
     tasks: JSON.parse(JSON.stringify(mockTasks)),
     taskHistory: [
       { id: 'TSK-H01', title: 'Ağıl Dezenfeksiyonu', desc: 'Tüm bölmelerin ilaçlı yıkama işlemi.', type: 'cleaning', prio: 'Normal', scope: 'herd', targetTag: null, status: 'completed', createdAt: '2026-03-15', completedAt: '2026-03-15' }
@@ -229,7 +256,7 @@ export function getInitialDemoState() {
         gender: 'Erkek',
         group: 'Besi',
         lastWeight: 14.2,
-        deathDate: '2026-02-10',
+        deathDate: addDaysIso(todayIso(), -235), // TR-102'nin kuzusu, 25 günlükken (BR-DEMO-003)
         deathReason: 'Enterotoksemi (Çelerme)',
         financialLoss: 3500,
         note: 'Şiddetli ishal sonrası kayıp.'
@@ -302,17 +329,60 @@ export function getInitialDemoState() {
         type: 'GROUP',
         sireIds: ['TR-210'],
         damIds: ['TR-045', 'TR-088'],
-        startDate: addDaysIso(todayIso(), -160),
-        endDate: addDaysIso(todayIso(), -145),
+        startDate: addDaysIso(todayIso(), -275),
+        endDate: addDaysIso(todayIso(), -260),
         status: 'COMPLETED',
+        damStatus: { 'TR-045': 'DELIVERED', 'TR-088': 'FAILED' },
+        damPrevGroup: {},
+        births: [{ damId: 'TR-045', date: addDaysIso(todayIso(), -120), type: 'Normal', babyIds: ['TR-004', 'TR-005'], lambCount: 2 }],
         milestones: {
-          cycleCheckDate: addDaysIso(todayIso(), -143),
-          ultrasoundDate: addDaysIso(todayIso(), -115),
-          lateGestationDate: addDaysIso(todayIso(), -45),
-          expectedBirthDate: addDaysIso(todayIso(), -12)
+          cycleCheckDate: addDaysIso(todayIso(), -258),
+          ultrasoundDate: addDaysIso(todayIso(), -230),
+          lateGestationDate: addDaysIso(todayIso(), -160),
+          expectedBirthDate: addDaysIso(todayIso(), -125)
         },
         inbreedingWarning: null,
-        birthRecord: { date: addDaysIso(todayIso(), -10), type: 'Normal', lambCount: 2 }
+        birthRecord: { date: addDaysIso(todayIso(), -120), type: 'Normal', lambCount: 2, notes: '' }
+      },
+      {
+        id: 'BR-DEMO-003',
+        type: 'INDIVIDUAL',
+        sireIds: ['TR-210'],
+        damIds: ['TR-102'],
+        startDate: addDaysIso(todayIso(), -410),
+        endDate: null,
+        status: 'COMPLETED',
+        damStatus: { 'TR-102': 'DELIVERED' },
+        damPrevGroup: {},
+        births: [{ damId: 'TR-102', date: addDaysIso(todayIso(), -260), type: 'Normal', babyIds: ['TR-019'], lambCount: 1 }],
+        milestones: {
+          cycleCheckDate: addDaysIso(todayIso(), -393),
+          ultrasoundDate: addDaysIso(todayIso(), -365),
+          lateGestationDate: addDaysIso(todayIso(), -295),
+          expectedBirthDate: addDaysIso(todayIso(), -260)
+        },
+        inbreedingWarning: null,
+        birthRecord: { date: addDaysIso(todayIso(), -260), type: 'Normal', lambCount: 1, notes: '' }
+      },
+      {
+        id: 'BR-DEMO-004',
+        type: 'INDIVIDUAL',
+        sireIds: ['TR-301'],
+        damIds: ['TR-112'],
+        startDate: addDaysIso(todayIso(), -330),
+        endDate: null,
+        status: 'COMPLETED',
+        damStatus: { 'TR-112': 'DELIVERED' },
+        damPrevGroup: {},
+        births: [{ damId: 'TR-112', date: addDaysIso(todayIso(), -180), type: 'Normal', babyIds: ['TR-130', 'TR-131'], lambCount: 2 }],
+        milestones: {
+          cycleCheckDate: addDaysIso(todayIso(), -313),
+          ultrasoundDate: addDaysIso(todayIso(), -285),
+          lateGestationDate: addDaysIso(todayIso(), -215),
+          expectedBirthDate: addDaysIso(todayIso(), -180)
+        },
+        inbreedingWarning: null,
+        birthRecord: { date: addDaysIso(todayIso(), -180), type: 'Normal', lambCount: 2, notes: '' }
       }
     ]
   });

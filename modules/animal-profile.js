@@ -18,6 +18,7 @@ import { OBSERVATION_RULES } from '../data/symptom-catalog.js';
 import { getObservationsForAnimal, resolveObservation, linkTreatmentToObservation } from '../core/observationManager.js';
 import { symptomLabel, severityLabel, effectiveSeverityRank } from '../core/observationRecords.js';
 import { escapeHtml } from '../core/sanitize.js';
+import { computePerformanceIndexes, getWeighings, CONFIDENCE_LABELS } from '../core/performanceIndex.js';
 import { openObservationModal } from './observation-modal.js';
 import { openTreatmentModal } from './treatment-modal.js';
 import { openBreedingModal } from './breeding-modal.js';
@@ -80,7 +81,8 @@ export function render() {
     hasBcs: hasNum(rawAnimal.bcs),
     bcsScore: hasNum(rawAnimal.bcs) ? parseFloat(rawAnimal.bcs) : 3,
     healthStatus: rawAnimal.status || 'good',
-    geneticsScore: hasNum(rawAnimal.yieldScore) ? `${rawAnimal.yieldScore}/100` : NA,
+    performance: rawAnimal.id ? computePerformanceIndexes(state).get(rawAnimal.id) : null,
+    weighings: getWeighings(rawAnimal),
     focus: rawAnimal.focus || 'meat',
     lineage: {
       mother: rawAnimal.mother || 'Bilinmiyor',
@@ -234,9 +236,11 @@ function _renderInfoTab(animal) {
       </div>
       <div class="animal-data-card full-span" style="grid-column: span 3; flex-direction: row; justify-content: space-between;">
         <span class="animal-data-label">Doğum Ağırlığı: <strong style="color:var(--text-primary)">${animal.birthWeight}</strong></span>
-        <span class="animal-data-label">Genetik Skor: <strong style="color:var(--accent-green)">${animal.geneticsScore}</strong></span>
+        <span class="animal-data-label">Damızlık Skoru: <strong style="color:${_scoreColor(animal.performance?.score)}">${animal.performance?.score != null ? `${animal.performance.score}/100` : 'Veri yok'}</strong></span>
       </div>
     </div>
+
+    ${_renderPerformanceCard(animal.performance, animal.weighings)}
 
     <!-- BCS Section -->
     <div class="section-title" style="margin-top:var(--space-xl)"><span class="dot" style="background:var(--accent-cyan)"></span>Vücut Kondisyonu (BCS)</div>
@@ -313,6 +317,59 @@ function _initInfoTab() {
       _rerender();
     });
   }
+}
+
+const FOCUS_LABELS = { meat: 'Et', milk: 'Süt', breed: 'Döl' };
+
+function _scoreColor(score) {
+  if (score === null || score === undefined) return 'var(--text-muted)';
+  return score >= 65 ? 'var(--accent-green)' : score >= 45 ? 'var(--accent-amber)' : 'var(--danger-red)';
+}
+
+/** Damızlık skoru kartı: toplam skor, özellik dökümü, eksik kayıtlar ve tartım geçmişi */
+function _renderPerformanceCard(perf, weighings) {
+  if (!perf) return '';
+  const rows = perf.traits.map(t => `
+    <div style="margin-bottom:10px;">
+      <div style="display:flex; justify-content:space-between; gap:8px; font-size:0.8rem;">
+        <span style="color:var(--text-primary); font-weight:600;">${escapeHtml(t.label)}</span>
+        <span style="color:var(--text-secondary);">${escapeHtml(t.rawText)} · <strong style="color:${_scoreColor(t.score)}">${t.score}</strong></span>
+      </div>
+      <div style="height:6px; border-radius:4px; background:rgba(255,255,255,0.08); margin-top:4px; overflow:hidden;">
+        <div style="height:100%; width:${t.score}%; background:${_scoreColor(t.score)};"></div>
+      </div>
+      <div style="font-size:0.68rem; color:var(--text-muted); margin-top:2px;">${escapeHtml(t.basis)}</div>
+    </div>`).join('');
+
+  const hints = perf.hints.length ? `
+    <div style="margin-top:10px; padding:10px; border-radius:10px; background:rgba(255,255,255,0.04); font-size:0.72rem; color:var(--text-muted); line-height:1.5;">
+      <div style="font-weight:700; color:var(--text-secondary); margin-bottom:2px;">Skoru güçlendirmek için:</div>
+      ${perf.hints.map(h => `• ${escapeHtml(h)}`).join('<br>')}
+    </div>` : '';
+
+  const recent = weighings.slice(-5).reverse();
+  const weighList = recent.length ? `
+    <div style="margin-top:12px; font-size:0.75rem; color:var(--text-secondary);">
+      <div style="font-weight:700; margin-bottom:4px;">⚖️ Tartım Geçmişi</div>
+      ${recent.map(w => `<div style="display:flex; justify-content:space-between; padding:3px 0; border-bottom:1px solid rgba(255,255,255,0.05);"><span>${escapeHtml(w.date)}</span><strong style="color:var(--text-primary);">${w.weight} kg</strong></div>`).join('')}
+    </div>` : '';
+
+  return `
+    <div class="section-title" style="margin-top:var(--space-xl)"><span class="dot" style="background:var(--accent-green)"></span>Damızlık Skoru</div>
+    <div class="glass-card" id="performance-card" style="padding:14px 16px;">
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:12px;">
+        <div>
+          <div style="font-size:1.8rem; font-weight:800; color:${_scoreColor(perf.score)}; line-height:1;">${perf.score !== null ? perf.score : '—'}<span style="font-size:0.85rem; color:var(--text-muted); font-weight:600;">${perf.score !== null ? ' / 100' : ''}</span></div>
+          <div style="font-size:0.72rem; color:var(--text-muted); margin-top:4px;">${perf.score !== null ? `${CONFIDENCE_LABELS[perf.confidence]} · ${FOCUS_LABELS[perf.focus] || ''} odağına göre` : 'Yeterli verim kaydı yok'}</div>
+        </div>
+        <div style="font-size:2rem;">🧬</div>
+      </div>
+      ${rows || '<div style="font-size:0.78rem; color:var(--text-muted);">Henüz puanlanabilecek kayıt yok.</div>'}
+      ${hints}
+      ${weighList}
+      <div style="font-size:0.66rem; color:var(--text-muted); margin-top:10px; line-height:1.4;">DNA testi değildir; hayvanın ve yavrularının kayıtlı tartım, doğum, katım, ölüm ve sağlık verilerinden hesaplanır. 50 ortalama sayılır; az kayıtta skor 50'ye yakın kalır.</div>
+    </div>
+  `;
 }
 
 // ═══════════════════════════════════════

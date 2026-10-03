@@ -3,11 +3,12 @@
  * Tüm hayvanların listelendiği, arama ve filtreleme yapılabilen ana tablo/grid ekranı.
  */
 
-import { getState, setState } from '../core/state.js';
+import { getState, readState, setState } from '../core/state.js';
 import { showAlert, showFormModal } from '../core/modal.js';
 import { addAnimal, isWeightPlausible, getWeightRange } from '../core/herdManager.js';
 import { BREED_OPTIONS, ANIMAL_TYPES, ANIMAL_GROUPS, ANIMAL_LIMITS } from '../data/herd-constants.js';
 import { getAllQuarantinedAnimals } from '../core/healthManager.js';
+import { computePerformanceIndexes } from '../core/performanceIndex.js';
 
 let _container = null;
 let _searchTerm = '';
@@ -30,10 +31,12 @@ export function init() {
 
 // Karantina durumu her çizimde bir kez hesaplanır (kart başına yeniden taranmaz)
 let _quarantineMap = new Map();
+let _scoreMap = new Map();
 
 function _renderContent() {
   const animals = getState().animals || [];
   _quarantineMap = new Map(getAllQuarantinedAnimals().map(q => [q.animalId, q]));
+  _scoreMap = computePerformanceIndexes(readState());
   const totalAnimalsInHerd = animals.length;
   
   // 1) Filtreleme
@@ -160,7 +163,7 @@ function _renderAnimalCard(animal) {
       </div>
       <div class="a-metrics" style="text-align:right; flex-shrink:0;">
         <div style="font-size:0.9rem; font-weight:700; white-space:nowrap;">${animal.weight > 0 ? animal.weight + ' kg' : '-'}${isWeightPlausible(animal) ? '' : ` <span title="${animal.type || 'Bu tür'} için beklenen aralık ${getWeightRange(animal.type).join('–')} kg. Hayvan profilinden tartım kaydını düzeltin." style="color:var(--warning-orange);">⚠️</span>`}</div>
-        <div style="font-size:0.75rem; color:${statusColor}; white-space:nowrap;">${statusIcon} Skor: ${animal.yieldScore || '-'}</div>
+        <div style="font-size:0.75rem; color:${statusColor}; white-space:nowrap;">${statusIcon} Skor: ${_scoreMap.get(animal.id)?.score ?? '—'}</div>
       </div>
     </div>
   `;

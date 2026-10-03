@@ -142,20 +142,27 @@ export function addAnimal(input) {
     weight,
     bcs: 3,
     status: 'good',
-    yieldScore: 85,
     lastVaccine: '-',
     focus: GROUP_TO_FOCUS[group] || 'meat',
     birthDate,
     // Bilinmeyen ebeveyn null saklanır (akrabalık kontrolü 'Bilinmiyor' metnini ortak ebeveyn sanmasın)
     mother: normalizeParentId(input.mother),
     father: normalizeParentId(input.father),
-    addedAt: todayIso()
+    addedAt: todayIso(),
+    // Tarihli tartımlar (damızlık skorundaki büyüme hızı bunlardan hesaplanır)
+    weightHistory: weight ? [{ date: todayIso(), weight }] : []
   };
   const purchasePrice = parseFloat(input.purchasePrice);
   if (purchasePrice >= 0) animal.purchasePrice = purchasePrice;
 
   setState({ animals: [animal, ...(state.animals || [])], activeAnimalId: animal.id });
   return { success: true, message: `${animal.id} sürüye eklendi.`, animal };
+}
+
+/** Tartım geçmişine kayıt ekler (aynı güne ikinci tartım öncekinin yerine geçer). Saf. */
+export function appendWeighing(history, date, weight) {
+  return [...(history || []).filter(w => w?.date !== date), { date, weight }]
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)));
 }
 
 /**
@@ -175,7 +182,10 @@ export function updateAnimal(animalId, patch) {
   if ('weight' in safePatch) {
     const error = validateWeight(next.type, safePatch.weight);
     if (error) return { success: false, message: error };
-    if (!_isBlank(safePatch.weight)) next.weight = Number(safePatch.weight);
+    if (!_isBlank(safePatch.weight)) {
+      next.weight = Number(safePatch.weight);
+      next.weightHistory = appendWeighing(animals[idx].weightHistory, todayIso(), next.weight);
+    }
   }
   if ('bcs' in safePatch) {
     const [min, max] = ANIMAL_LIMITS.bcs;
@@ -321,7 +331,6 @@ export function registerBirth(motherId, input) {
     birthWeight,
     bcs: 2.5,
     status: 'good',
-    yieldScore: 70,
     lastVaccine: '-',
     focus: 'meat',
     birthDate,
