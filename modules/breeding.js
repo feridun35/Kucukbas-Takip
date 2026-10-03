@@ -7,6 +7,8 @@
 
 import { getState } from '../core/state.js';
 import { calculateBirthDate } from '../core/breedingManager.js';
+import { getOpenDamMap, deriveRecordStatus, isRecordOpen, DAM_STATUS } from '../core/breedingStatus.js';
+import { todayIso, daysBetweenIso } from '../core/dateUtils.js';
 import { showAlert } from '../core/modal.js';
 import { openBreedingModal } from './breeding-modal.js';
 
@@ -21,27 +23,26 @@ export function render() {
   const records = state.breedingRecords || [];
   const animals = state.animals || [];
 
-  // ── Özet Metrikleri Hesapla ──
-  const activeRecords = records.filter(r => r.status === 'ACTIVE' || r.status === 'PREGNANT');
-  const pregnantRecords = records.filter(r => r.status === 'PREGNANT');
-  const completedRecords = records.filter(r => r.status === 'COMPLETED');
+  // ── Özet Metrikleri (anaç bazında) ──
+  const activeRecords = records.filter(isRecordOpen);
+  const openDams = getOpenDamMap(records);
+  const pregnantDams = [...openDams.entries()].filter(([, info]) => info.status === DAM_STATUS.PREGNANT);
 
-  // Yaklaşan doğumlar (önümüzdeki 30 gün)
-  const today = new Date();
-  const upcomingBirths = pregnantRecords.filter(r => {
-    const expected = new Date(r.milestones.expectedBirthDate);
-    const diffDays = Math.round((expected - today) / 86400000);
+  // Yaklaşan doğumlar (önümüzdeki 30 gün içinde doğumu beklenen doğrulanmış gebe anaçlar)
+  const today = todayIso();
+  const upcomingBirths = pregnantDams.filter(([, info]) => {
+    const diffDays = daysBetweenIso(today, info.record.milestones.expectedBirthDate);
     return diffDays >= 0 && diffDays <= 30;
   });
 
   // Toplam gebe dişi sayısı
-  const totalPregnantDams = pregnantRecords.reduce((sum, r) => sum + r.damIds.length, 0);
+  const totalPregnantDams = pregnantDams.length;
 
   // Aktif grup katımları
   const activeGroupRecords = activeRecords.filter(r => r.type === 'GROUP');
 
   // ── Yaklaşan Milestone'lar (Zaman Çizelgesi) ──
-  const milestoneEvents = _collectUpcomingMilestones(activeRecords, pregnantRecords);
+  const milestoneEvents = _collectUpcomingMilestones(activeRecords, []);
 
   _container.innerHTML = `
     <div class="section-title"><span class="dot" style="background:var(--accent-orange)"></span>Üreme & Islah Yönetimi</div>
@@ -120,7 +121,7 @@ export function init() {
 
 function _collectUpcomingMilestones(activeRecords, pregnantRecords) {
   const allRecords = [...activeRecords, ...pregnantRecords];
-  const today = new Date();
+  const today = todayIso();
   const events = [];
 
   // Unique records (active'de hem active hem pregnant olabilir, dedupe)
@@ -143,7 +144,7 @@ function _collectUpcomingMilestones(activeRecords, pregnantRecords) {
       const dateStr = ms[m.key];
       if (!dateStr) return;
       const msDate = new Date(dateStr);
-      const diffDays = Math.round((msDate - today) / 86400000);
+      const diffDays = daysBetweenIso(today, dateStr);
 
       // Sadece gelecek 60 gün ve geçmiş 5 gün içindekiler
       if (diffDays >= -5 && diffDays <= 60) {
@@ -198,14 +199,15 @@ function _renderRecordsList(records, animals) {
       'COMPLETED': { bg: 'rgba(16,185,129,0.12)', border: 'rgba(16,185,129,0.3)', text: '#10b981', label: '🟢 Tamamlandı' },
       'FAILED': { bg: 'rgba(239,68,68,0.12)', border: 'rgba(239,68,68,0.3)', text: '#ef4444', label: '🔴 Başarısız' }
     };
-    const st = statusColors[rec.status] || statusColors['ACTIVE'];
+    const status = deriveRecordStatus(rec);
+    const st = statusColors[status] || statusColors['ACTIVE'];
 
     const sireLabel = rec.sireIds.join(', ');
     const damLabel = rec.damIds.length > 2 ? `${rec.damIds.slice(0, 2).join(', ')} +${rec.damIds.length - 2}` : rec.damIds.join(', ');
     const typeLabel = rec.type === 'GROUP' ? '🐏 Grup Katımı' : '🐑 Bireysel';
 
     let progressHtml = '';
-    if (rec.status === 'PREGNANT' || rec.status === 'ACTIVE') {
+    if (status === 'PREGNANT' || status === 'ACTIVE') {
       const pregInfo = calculateBirthDate(rec.startDate);
       progressHtml = `
         <div style="margin-top:8px;">

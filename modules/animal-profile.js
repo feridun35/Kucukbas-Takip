@@ -2,15 +2,19 @@
  * ShepherdAI — Hayvan Profili ve Genetik Pasaport Modülü (Tabbed Structure)
  */
 
+import { todayIso, daysBetweenIso } from '../core/dateUtils.js';
 import { animalData } from '../data/mock-data.js';
-import { getState, getAnimalById, setState } from '../core/state.js';
+import { getState, getAnimalById } from '../core/state.js';
 import { showAlert, showPrompt, showConfirm, showSelect, showFormModal } from '../core/modal.js';
 import { navigateTo } from '../core/router.js';
-import { calculateCompatibility, calculateBirthDate, checkInbreedingRisk, recordBirth } from '../core/breedingManager.js';
-import { parseDate } from '../core/herdMathEngine.js';
+import { calculateBirthDate, confirmPregnancy, markMatingFailed } from '../core/breedingManager.js';
+import { getOpenDamMap, getDamStatus, isOpenDamStatus } from '../core/breedingStatus.js';
 import { calculateAnimalROI } from '../core/financeEngine.js';
 import { getTasksForUser, getTaskHistory, addTask, completeTask, TASK_TYPES } from '../core/workforceManager.js';
 import { getAnimalWithdrawalStatus } from '../core/healthManager.js';
+import { isVaccineRecord, recordTargetsAnimal } from '../core/healthRecords.js';
+import { updateAnimal, registerBirth, recordDeath, estimateLossFromWeight } from '../core/herdManager.js';
+import { DEATH_REASONS } from '../data/herd-constants.js';
 import { openTreatmentModal } from './treatment-modal.js';
 import { openBreedingModal } from './breeding-modal.js';
 
@@ -254,22 +258,7 @@ function _initInfoTab() {
       const newFocus = btnEl.dataset.focus;
       const animalId = btnEl.dataset.id;
 
-      // Update state for this specific animal
-      const state = getState();
-      const animals = [...state.animals];
-      const idx = animals.findIndex(a => a.id === animalId);
-      if (idx > -1) {
-        animals[idx] = { ...animals[idx], focus: newFocus };
-        setState({ animals });
-
-        // Re-render
-        const parent = _container.parentNode;
-        const scrollPos = window.scrollY;
-        parent.innerHTML = '';
-        parent.appendChild(render());
-        init();
-        window.scrollTo(0, scrollPos);
-      }
+      if (updateAnimal(animalId, { focus: newFocus }).success) _rerender();
     });
   });
 
@@ -289,33 +278,21 @@ function _initInfoTab() {
     });
 
     bcsInput.addEventListener('change', (e) => {
-      const state = getState();
-      const animals = [...(state.animals || [])];
-      const activeId = state.activeAnimalId || (animals.length > 0 ? animals[0].id : null);
-      const idx = animals.findIndex(a => a.id === activeId);
-      if (idx > -1) {
-        animals[idx] = { ...animals[idx], bcs: parseFloat(e.target.value) };
-        setState({ animals });
-      }
+      updateAnimal(e.target.dataset.tag, { bcs: parseFloat(e.target.value) });
     });
   }
 
   const btnWeight = _container.querySelector('#btn-update-weight');
   if (btnWeight) {
     btnWeight.addEventListener('click', async () => {
-      const state = getState();
-      const animals = [...(state.animals || [])];
-      const activeId = state.activeAnimalId || (animals.length > 0 ? animals[0].id : null);
-      const idx = animals.findIndex(a => a.id === activeId);
-      if (idx === -1) return;
+      const animal = _getActiveAnimal();
+      if (!animal) return;
 
-      const currentVal = animals[idx].weight || '';
-      const newWeight = await showPrompt('Ağırlık Güncelle', `Mevcut Ağırlık: ${currentVal} kg\nYeni ağırlığı giriniz (kg):`, 'number', '⚖️');
-      if (newWeight && !isNaN(parseFloat(newWeight))) {
-        const parsedW = parseFloat(newWeight);
-        animals[idx] = { ...animals[idx], weight: parsedW };
-        setState({ animals });
-        await showAlert('Başarılı', `${animals[idx].id} için yeni ağırlık (${parsedW} kg) sisteme kaydedildi.`, '✅');
+      const newWeight = await showPrompt('Ağırlık Güncelle', `Mevcut Ağırlık: ${animal.weight || ''} kg\nYeni ağırlığı giriniz (kg):`, 'number', '⚖️');
+      const parsedW = parseFloat(newWeight);
+      if (!isNaN(parsedW) && parsedW > 0) {
+        updateAnimal(animal.id, { weight: parsedW });
+        await showAlert('Başarılı', `${animal.id} için yeni ağırlık (${parsedW} kg) sisteme kaydedildi.`, '✅');
         _rerender();
       }
     });
@@ -364,23 +341,48 @@ function _initPassportTab() {
 // ═══════════════════════════════════════
 // Tab: BREEDING (Islah & Eşleşme)
 // ═══════════════════════════════════════
+const DAM_STATUS_LABELS = {
+  ACTIVE: '🟠 Koç katımında (gebelik doğrulanmadı)',
+  PREGNANT: '🟣 Gebe (doğrulandı)',
+  DELIVERED: '🟢 Doğum yaptı',
+  FAILED: '🔴 Tutmadı',
+  LOST: '⚫ Kayıp'
+};
+
 function _renderBreedingTab(animal, focusMode) {
   const state = getState();
   const records = state.breedingRecords || [];
   const tagId = animal.tagID;
 
-  // Bu hayvanla ilgili aktif kayıt var mı?
-  const activeRecord = records.find(r =>
-    (r.status === 'ACTIVE' || r.status === 'PREGNANT') && r.damIds.includes(tagId)
-  );
+  // Erkek hayvan: koç olarak yer aldığı katımlar
+  if (animal.rawGender === 'Erkek') {
+    const sireRecords = records.filter(r => (r.sireIds || []).includes(tagId));
+    return `
+      <div class="glass-card" style="text-align:center; padding:28px 20px; border:1px dashed rgba(249,115,22,0.3); border-radius:20px;">
+        <div style="font-size:3rem; margin-bottom:12px;">🐏</div>
+        <h3 style="font-size:1rem; font-weight:700; color:var(--text-primary); margin-bottom:6px;">Damızlık Kayıtları</h3>
+        <p style="font-size:0.82rem; color:var(--text-secondary); margin-bottom:20px; line-height:1.5;">
+          ${tagId} bu güne kadar ${sireRecords.length} katımda koç/teke olarak yer aldı.
+        </p>
+        <button class="huge-btn btn-primary" id="btn-start-mating" style="width:100%; border-radius:20px; padding:14px; background:#f97316; box-shadow:0 4px 16px rgba(249,115,22,0.4); font-weight:700;">
+          <span class="btn-icon">🔗</span> Bu Koçla Yeni Katım
+        </button>
+      </div>
+      ${sireRecords.length > 0 ? `
+        <div class="section-title" style="margin-top:var(--space-lg);"><span class="dot" style="background:#10b981"></span>Katımlar</div>
+        ${_renderPastBreedingRecords(sireRecords)}
+      ` : ''}
+    `;
+  }
 
-  // Geçmiş kayıtlar
+  // Dişi hayvan: anaç durumu kayıt bazında değil, anaç bazında izlenir
+  const openInfo = getOpenDamMap(records).get(tagId);
+  const activeRecord = openInfo?.record || null;
+  const damStatus = openInfo?.status || null;
   const pastRecords = records.filter(r =>
-    (r.status === 'COMPLETED' || r.status === 'FAILED') && r.damIds.includes(tagId)
-  );
+    (r.damIds || []).includes(tagId) && !isOpenDamStatus(getDamStatus(r, tagId)));
 
   if (!activeRecord) {
-    // Aktif eşleşme yok — eşleşme başlatma ekranı
     return `
       <div class="glass-card" style="text-align:center; padding:32px 20px; border:1px dashed rgba(249,115,22,0.3); border-radius:20px;">
         <div style="font-size:3rem; margin-bottom:12px;">🐏</div>
@@ -395,7 +397,7 @@ function _renderBreedingTab(animal, focusMode) {
       </div>
       ${pastRecords.length > 0 ? `
         <div class="section-title" style="margin-top:var(--space-lg);"><span class="dot" style="background:#10b981"></span>Geçmiş Eşleşmeler</div>
-        ${_renderPastBreedingRecords(pastRecords)}
+        ${_renderPastBreedingRecords(pastRecords, tagId)}
       ` : ''}
     `;
   }
@@ -404,9 +406,8 @@ function _renderBreedingTab(animal, focusMode) {
   const pregInfo = calculateBirthDate(activeRecord.startDate);
   const ms = activeRecord.milestones;
   const sireLabel = activeRecord.sireIds.join(', ');
+  const today = todayIso();
 
-  // Milestone timeline
-  const today = new Date();
   const milestones = [
     { label: 'Kızgınlık Kontrolü', date: ms.cycleCheckDate, icon: '🔴', day: 17 },
     { label: 'Ultrason Muayenesi', date: ms.ultrasoundDate, icon: '🩺', day: 45 },
@@ -415,10 +416,9 @@ function _renderBreedingTab(animal, focusMode) {
   ];
 
   const milestoneHtml = milestones.map(m => {
-    const msDate = new Date(m.date);
-    const isPast = msDate <= today;
-    const isToday = msDate.toDateString() === today.toDateString();
-    const diffDays = Math.round((msDate - today) / 86400000);
+    const diffDays = daysBetweenIso(today, m.date);
+    const isToday = diffDays === 0;
+    const isPast = diffDays < 0;
     let statusClass = isPast ? 'done' : (diffDays <= 7 ? 'soon' : 'future');
     if (isToday) statusClass = 'today';
     return `
@@ -437,7 +437,7 @@ function _renderBreedingTab(animal, focusMode) {
 
   return `
     <div class="pregnancy-header">
-      <span class="preg-icon">🤰</span> Gebelik Durumu — Koç: ${sireLabel}
+      <span class="preg-icon">🤰</span> ${DAM_STATUS_LABELS[damStatus] || ''} — Koç: ${sireLabel}
     </div>
 
     <div class="glass-card pregnancy-card ${pregInfo.isCritical ? 'critical-glow' : 'safe-glow'}">
@@ -456,6 +456,16 @@ function _renderBreedingTab(animal, focusMode) {
       </div>
     </div>
 
+    <div style="display:flex; gap:10px; margin-top:var(--space-md);" data-record-id="${activeRecord.id}">
+      ${damStatus === 'ACTIVE' ? `
+        <button class="huge-btn btn-primary" id="btn-confirm-pregnancy" style="flex:1; border-radius:18px; padding:12px; background:var(--accent-purple); font-weight:700;">
+          ✅ Gebelik Doğrulandı
+        </button>` : ''}
+      <button class="huge-btn btn-secondary" id="btn-mating-failed" style="flex:1; border-radius:18px; padding:12px; color:var(--danger-red); border:1px solid rgba(239,68,68,0.3);">
+        ❌ Tutmadı
+      </button>
+    </div>
+
     <div class="section-title" style="margin-top:var(--space-lg);"><span class="dot" style="background:var(--accent-purple)"></span>Gebelik Takvimi</div>
     <div class="glass-card" style="padding:var(--space-sm);">
       ${milestoneHtml}
@@ -470,39 +480,79 @@ function _renderBreedingTab(animal, focusMode) {
 
     ${pastRecords.length > 0 ? `
       <div class="section-title" style="margin-top:var(--space-lg);"><span class="dot" style="background:#10b981"></span>Geçmiş Eşleşmeler</div>
-      ${_renderPastBreedingRecords(pastRecords)}
+      ${_renderPastBreedingRecords(pastRecords, tagId)}
     ` : ''}
   `;
 }
 
-function _renderPastBreedingRecords(records) {
+function _renderPastBreedingRecords(records, damId = null) {
   return records.map(r => {
     const sireLabel = r.sireIds.join(', ');
-    const birthInfo = r.birthRecord ? `${r.birthRecord.type} doğum • ${r.birthRecord.lambCount} yavru` : 'Doğum kaydı yok';
+    let info;
+    if (damId) {
+      const st = getDamStatus(r, damId);
+      const birth = (r.births || []).find(b => b.damId === damId);
+      info = birth
+        ? `${birth.type} doğum • ${birth.lambCount} yavru (${birth.date})`
+        : (DAM_STATUS_LABELS[st] || st);
+      if (!birth && st === 'DELIVERED' && r.birthRecord) info = `${r.birthRecord.type} doğum • ${r.birthRecord.lambCount} yavru`;
+    } else {
+      const lambs = (r.births || []).reduce((s, b) => s + (b.lambCount || 0), 0) || r.birthRecord?.lambCount || 0;
+      info = `${r.damIds.length} anaç • ${lambs} yavru`;
+    }
     return `
       <div class="glass-card" style="padding:12px; margin-bottom:8px; border-left:3px solid #10b981;">
         <div style="display:flex; justify-content:space-between; font-size:0.82rem;">
           <span style="font-weight:600; color:var(--text-primary);">🐏 Koç: ${sireLabel}</span>
           <span style="font-size:0.72rem; color:var(--text-muted);">${new Date(r.startDate).toLocaleDateString('tr-TR', {day:'numeric', month:'short', year:'numeric'})}</span>
         </div>
-        <div style="font-size:0.75rem; color:var(--text-secondary); margin-top:4px;">🐣 ${birthInfo}</div>
+        <div style="font-size:0.75rem; color:var(--text-secondary); margin-top:4px;">🐣 ${info}</div>
       </div>
     `;
   }).join('');
 }
 
 function _initBreedingTab() {
-  // Yeni eşleşme kaydı oluştur
+  // Yeni eşleşme kaydı (dişide anaç, erkekte koç olarak ön seçili)
   const btnStartMating = _container.querySelector('#btn-start-mating');
   if (btnStartMating) {
     btnStartMating.addEventListener('click', async () => {
-      const state = getState();
-      const activeId = state.activeAnimalId || (state.animals && state.animals.length > 0 ? state.animals[0].id : null);
-      const result = await openBreedingModal(activeId);
+      const animal = _getActiveAnimal();
+      if (!animal) return;
+      const result = animal.gender === 'Erkek'
+        ? await openBreedingModal(null, animal.id)
+        : await openBreedingModal(animal.id);
       if (result.saved) {
         await showAlert('Eşleşme Kaydedildi! 🐏', 'Koç katımı ve gebelik takvimi oluşturuldu.', '✅');
         _rerender();
       }
+    });
+  }
+
+  const actions = _container.querySelector('[data-record-id]');
+  const recordId = actions?.dataset.recordId;
+
+  const btnConfirm = _container.querySelector('#btn-confirm-pregnancy');
+  if (btnConfirm) {
+    btnConfirm.addEventListener('click', async () => {
+      const animal = _getActiveAnimal();
+      const ok = await showConfirm('Gebelik Doğrulama', `${animal.id} için gebelik (ultrason vb.) doğrulandı mı?\n\nHayvan "Gebe" grubuna alınacak; gebelikte riskli ilaçlarda uyarı verilecek.`, '🤰');
+      if (!ok) return;
+      const res = confirmPregnancy(recordId, animal.id);
+      await showAlert(res.success ? 'Gebelik Kaydedildi' : 'İşlem Yapılamadı', res.message, res.success ? '✅' : '⚠️');
+      _rerender();
+    });
+  }
+
+  const btnFailed = _container.querySelector('#btn-mating-failed');
+  if (btnFailed) {
+    btnFailed.addEventListener('click', async () => {
+      const animal = _getActiveAnimal();
+      const ok = await showConfirm('Katım Tutmadı', `${animal.id} için gebelik tutmadı olarak kaydedilsin mi?\n\nBu anaca ait bekleyen gebelik takvimi görevleri kaldırılacak.`, '❌');
+      if (!ok) return;
+      const res = markMatingFailed(recordId, animal.id);
+      await showAlert(res.success ? 'Kaydedildi' : 'İşlem Yapılamadı', res.message, res.success ? '✅' : '⚠️');
+      _rerender();
     });
   }
 }
@@ -610,31 +660,17 @@ function _initHealthTab() {
   const btnBirth = _container.querySelector('#btn-report-birth');
   if (btnBirth) {
     btnBirth.addEventListener('click', async () => {
-      const state = getState();
-      const activeId = state.activeAnimalId || (state.animals && state.animals.length > 0 ? state.animals[0].id : null);
-      const rawAnimal = getAnimalById(activeId) || {};
-      const motherTag = rawAnimal.tagID || rawAnimal.id || 'Bilinmiyor';
+      const mother = _getActiveAnimal();
+      if (!mother) return;
 
-      // Doğan yavru bilgileri
-      const babyId = await showPrompt('Yavru Küpe No', `${motherTag} doğurdu! Yavrunun küpe numarasını giriniz:`, 'text', '🐣');
-      if (!babyId) return;
-
-      const genderOpt = await showSelect('Yavru Cinsiyeti', [
-        { value: 'Dişi', label: 'Dişi', color: '#ec4899' },
-        { value: 'Erkek', label: 'Erkek', color: '#3b82f6' }
-      ], '👶');
-      if (!genderOpt) return;
-
-      const weightStr = await showPrompt('Doğum Ağırlığı', 'Yavrunun doğum ağırlığı (kg):', 'number', '⚖️');
-      const birthWeight = parseFloat(weightStr) || 3.5;
-
-      const dateStr = await showPrompt('Doğum Tarihi', 'Doğum tarihini seçin:', 'date', '📅');
-      const todayStr = new Date().toISOString().split('T')[0];
-      const birthDateVal = dateStr ? dateStr : todayStr;
-
+      // Ortak bilgiler: doğum tarihi ve baba (açık katım kaydındaki koç önce önerilir)
+      const dateStr = await showPrompt('Doğum Tarihi', 'Doğum tarihini seçin (boş bırakılırsa bugün):', 'date', '📅');
+      const openSires = getOpenDamMap(getState().breedingRecords).get(mother.id)?.record?.sireIds || [];
+      const males = (getState().animals || []).filter(a => a.gender === 'Erkek');
       const maleOpts = [
+        ...openSires.map(id => ({ value: id, label: `${id} (katım kaydındaki koç)`, color: '#f97316' })),
         { value: 'Bilinmiyor', label: 'Bilinmiyor', color: '#6b7280' },
-        ...(state.animals || []).filter(a => a.gender === 'Erkek').map(a => ({
+        ...males.filter(a => !openSires.includes(a.id)).map(a => ({
           value: a.id, label: `${a.id} (${a.breed})`, color: '#3b82f6'
         }))
       ];
@@ -642,58 +678,42 @@ function _initHealthTab() {
       if (!fatherSel) return;
       const fatherTag = fatherSel.value === 'Bilinmiyor' ? null : fatherSel.value;
 
-      // Yavruyu sürüye ekle
-      const motherBreed = rawAnimal.breed || 'Merinos';
-      const babyType = motherBreed === 'Saanen' 
-        ? (genderOpt.value === 'Dişi' ? 'Oğlak' : 'Oğlak') 
-        : (genderOpt.value === 'Dişi' ? 'Kuzu' : 'Kuzu');
-      const today = new Date().toISOString().split('T')[0];
+      // Her yavru ayrı kaydedilir; ikiz/üçüz doğumlar aynı doğum kaydına eklenir
+      const babies = [];
+      let more = true;
+      while (more) {
+        const n = babies.length + 1;
+        const babyId = await showPrompt('Yavru Küpe No', `${mother.id} — ${n}. yavrunun küpe numarasını giriniz:`, 'text', '🐣');
+        if (!babyId) break;
 
-      const newBaby = {
-        id: babyId,
-        rfid: 'RFID-' + Math.floor(Math.random() * 90000 + 10000),
-        breed: motherBreed,
-        gender: genderOpt.value,
-        type: babyType,
-        group: 'Besi',
-        weight: birthWeight,
-        birthWeight: birthWeight,
-        bcs: 2.5,
-        status: 'good',
-        yieldScore: 70,
-        lastVaccine: '-',
-        focus: 'meat',
-        birthDate: birthDateVal,
-        mother: motherTag,
-        father: fatherTag
-      };
+        const genderOpt = await showSelect(`${n}. Yavru Cinsiyeti`, [
+          { value: 'Dişi', label: 'Dişi', color: '#ec4899' },
+          { value: 'Erkek', label: 'Erkek', color: '#3b82f6' }
+        ], '👶');
+        if (!genderOpt) break;
 
-      const animals = [...(state.animals || [])];
-      animals.unshift(newBaby);
+        const weightStr = await showPrompt('Doğum Ağırlığı', `${n}. yavrunun doğum ağırlığı (kg):`, 'number', '⚖️');
 
-      // Ananın grubunu Gebe'den Sağmal'a güncelle
-      const motherIdx = animals.findIndex(a => a.id === activeId);
-      if (motherIdx > -1 && animals[motherIdx].group === 'Gebe') {
-        animals[motherIdx] = { ...animals[motherIdx], group: 'Sağmal' };
+        const result = registerBirth(mother.id, {
+          babyId,
+          gender: genderOpt.value,
+          birthWeight: weightStr,
+          birthDate: dateStr,
+          fatherId: fatherTag
+        });
+
+        if (!result.success) {
+          await showAlert('Yavru Kaydedilemedi', result.message, '⚠️');
+          continue;
+        }
+        babies.push(result.baby);
+        more = await showConfirm('Başka Yavru Var mı?', `${result.baby.id} kaydedildi. Aynı doğumda başka yavru (ikiz/üçüz) var mı?`, '🐣');
       }
 
-      // Aktif breedingRecord varsa COMPLETED'a al
-      let breedingRecords = [...(state.breedingRecords || [])];
-      const activeBreeding = breedingRecords.find(r =>
-        (r.status === 'ACTIVE' || r.status === 'PREGNANT') && r.damIds.includes(activeId)
-      );
-      if (activeBreeding) {
-        breedingRecords = recordBirth(activeBreeding.id, {
-          date: birthDateVal,
-          type: 'Normal',
-          lambCount: 1
-        }, breedingRecords);
-      }
-
-      setState({ animals, breedingRecords });
-      await showAlert('Doğum Kaydedildi! 🎉', 
-        `${motherTag} → ${babyId} (${babyType}, ${genderOpt.value}, ${birthWeight} kg)\n` +
-        `Ana: ${motherTag}\nBaba: ${fatherTag || 'Bilinmiyor'}\n\nYavru sürüye eklendi.`, '🐣');
+      if (babies.length === 0) return;
+      await showAlert('Doğum Kaydedildi! 🎉',
+        `${mother.id} → ${babies.map(b => `${b.id} (${b.gender}, ${b.birthWeight} kg)`).join(', ')}\n` +
+        `Baba: ${fatherTag || 'Bilinmiyor'}\n\n${babies.length} yavru sürüye eklendi.`, '🐣');
       _rerender();
     });
   }
@@ -702,102 +722,42 @@ function _initHealthTab() {
   const btnDeath = _container.querySelector('#btn-report-death');
   if (btnDeath) {
     btnDeath.addEventListener('click', async () => {
-      const state = getState();
-      const activeId = state.activeAnimalId || (state.animals && state.animals.length > 0 ? state.animals[0].id : null);
-      const rawAnimal = getAnimalById(activeId) || {};
-      const tagToUse = rawAnimal.tagID || rawAnimal.id || 'Bilinmiyor';
+      const animal = _getActiveAnimal();
+      if (!animal) return;
 
       const confirmed = await showConfirm(
         '☠️ Ölüm Bildirimi',
-        `${tagToUse} küpe numaralı hayvanı ölü olarak bildirmek istediğinize emin misiniz?\n\nBu işlem geri alınamaz. Hayvan sürüden çıkarılacak ve kayıt geçmişe düşecektir.`,
+        `${animal.id} küpe numaralı hayvanı ölü olarak bildirmek istediğinize emin misiniz?\n\nBu işlem geri alınamaz. Hayvan sürüden çıkarılacak ve kayıt geçmişe düşecektir.`,
         '⚠️'
       );
+      if (!confirmed) return;
 
-      if (confirmed) {
-        const form = await showFormModal(`Ölüm Bildirimi (${tagToUse})`, [
-          { id: 'deathDate', label: 'Ölüm Tarihi', type: 'date', value: new Date().toISOString().split('T')[0] },
-          { id: 'reason', label: 'Ölüm Sebebi / Teşhis', type: 'select', options: [
-            'Enterotoksemi (Çelerme)',
-            'Pnömoni (Zatürre / Solunum)',
-            'Şap Hastalığı',
-            'Mastitis (Meme İltihabı)',
-            'Doğum Komplikasyonu',
-            'Zehirlenme / Yem Şişmesi',
-            'Kaza / Yaralanma / Kırık',
-            'Yaşlılık / Ecel',
-            'Diğer / Bilinmeyen'
-          ]},
-          { id: 'financialLoss', label: 'Tahmini Finansal Kayıp (₺)', type: 'number', value: (parseFloat(rawAnimal.weight || 45) * 190).toFixed(0) },
-          { id: 'note', label: 'Açıklama / Not', type: 'text', placeholder: 'Kayıp notu' }
-        ], '☠️');
+      const form = await showFormModal(`Ölüm Bildirimi (${animal.id})`, [
+        { id: 'deathDate', label: 'Ölüm Tarihi', type: 'date', value: todayIso() },
+        { id: 'reason', label: 'Ölüm Sebebi / Teşhis', type: 'select', options: DEATH_REASONS },
+        { id: 'financialLoss', label: 'Tahmini Finansal Kayıp (₺)', type: 'number', value: estimateLossFromWeight(animal.weight) },
+        { id: 'note', label: 'Açıklama / Not', type: 'text', placeholder: 'Kayıp notu' }
+      ], '☠️');
+      if (!form) return;
 
-        if (!form) return;
+      const result = recordDeath({
+        animalId: animal.id,
+        deathDate: form.deathDate,
+        reason: form.reason,
+        financialLoss: form.financialLoss,
+        note: form.note
+      });
 
-        const deathDate = form.deathDate || new Date().toISOString().split('T')[0];
-        const reason = form.reason || 'Diğer / Bilinmeyen';
-        const loss = parseFloat(form.financialLoss) || (parseFloat(rawAnimal.weight || 45) * 190);
-
-        // Canlı sürüden çıkar
-        const animals = [...(state.animals || [])];
-        const idx = animals.findIndex(a => a.id === activeId);
-        if (idx > -1) animals.splice(idx, 1);
-
-        // Mortalite kayıtlarına ekle
-        const mortalityRecords = [...(state.mortalityRecords || [])];
-        mortalityRecords.unshift({
-          id: 'MORT-' + Date.now(),
-          animalId: tagToUse,
-          rfid: rawAnimal.rfid || 'RFID-UNKNOWN',
-          breed: rawAnimal.breed || 'Merinos',
-          type: rawAnimal.type || 'Koyun',
-          gender: rawAnimal.gender || 'Dişi',
-          group: rawAnimal.group || 'Besi',
-          lastWeight: rawAnimal.weight || 0,
-          deathDate: deathDate,
-          deathReason: reason,
-          financialLoss: loss,
-          note: form.note || ''
-        });
-
-        // Görev geçmişine ekle
-        const taskHistory = [...(state.taskHistory || [])];
-        taskHistory.unshift({
-          id: 'DEATH-' + Date.now(),
-          title: `Ölüm Kaydı: ${tagToUse}`,
-          desc: `Sebep: ${reason}. Sürüden çıkarıldı ve Ölüm Raporlarına işlendi.`,
-          type: 'other',
-          prio: 'High',
-          scope: 'individual',
-          targetTag: tagToUse,
-          status: 'completed',
-          createdAt: deathDate,
-          completedAt: deathDate
-        });
-
-        setState({ animals, mortalityRecords, taskHistory });
-        await showAlert('Ölüm Kaydedildi', `${tagToUse} sürüden çıkarıldı, ölüm nedeni (${reason}) ve finansal kayıp (${loss} ₺) Ölüm Raporları'na işlendi.`, '😢');
-        navigateTo('herd-list');
+      if (!result.success) {
+        await showAlert('Kayıt Yapılamadı', result.message, '⚠️');
+        return;
       }
+
+      const r = result.record;
+      await showAlert('Ölüm Kaydedildi', `${animal.id} sürüden çıkarıldı, ölüm nedeni (${r.deathReason}) ve finansal kayıp (${r.financialLoss} ₺) Ölüm Raporları'na işlendi.`, '😢');
+      navigateTo('herd-list');
     });
   }
-}
-
-function _renderIndividualVaccines(animal) {
-  const state = getState();
-  const indVaccines = (state.vaccines || []).filter(v => !v.target || v.target === 'Tüm Sürü' || v.target === 'Sürü Geneli' || v.target.includes(animal.tagID));
-  if (indVaccines.length === 0) {
-    return '<p style="font-size:0.85rem; color:var(--text-muted); text-align:center; padding:10px;">Kayıtlı bireysel aşı/tedavi bulunmuyor.</p>';
-  }
-  return indVaccines.map(v => `
-    <div class="agenda-item ${v.status}">
-      <div class="agenda-indicator"></div>
-      <div class="agenda-info" style="flex:1;">
-        <span class="agenda-name">${v.name}</span>
-        <span class="agenda-date" style="margin-top:4px; display:block;">${v.status === 'done' ? v.date + ' (Tamamlandı)' : v.date}</span>
-      </div>
-      ${v.status === 'done' ? '<span class="agenda-done-icon">✔️</span>' : ''}
-    </div>
-  `).join('');
 }
 
 // ═══════════════════════════════════════
@@ -824,7 +784,7 @@ function _renderFinanceTab(animal) {
       <div class="fintech-header-top">
         <div>
           <h2 style="font-size:var(--font-size-md); font-weight:700; color:var(--text-primary)">Analiz (${animal.tagID})</h2>
-          <p style="font-size:var(--font-size-sm); color:var(--text-muted)">Güncel Piyasa Değeri</p>
+          <p style="font-size:var(--font-size-sm); color:var(--text-muted)">Tahmini Piyasa Değeri</p>
         </div>
         <div class="fintech-value ${colorClass}">
           ${(roiData.netValue || 0).toLocaleString('tr-TR')} ₺
@@ -855,6 +815,8 @@ function _renderFinanceTab(animal) {
         </div>
       </div>
     </div>
+
+    ${roiData.assumptions?.length ? `<p style="font-size:0.72rem; color:var(--text-muted); margin:-12px 0 var(--space-lg); line-height:1.4;">ℹ️ Tahmini hesap. Varsayımlar: ${roiData.assumptions.join('; ')}.</p>` : ''}
 
     <div class="bottom-action-container" style="position:relative !important; width:calc(100% - var(--space-lg)*2);">
       <button class="huge-btn btn-secondary" id="btn-sell-ind" style="width:100%; border-radius:24px; padding:16px;">
@@ -970,10 +932,9 @@ function _initTasksTab() {
   const btnAdd = _container.querySelector('#btn-add-ind-task');
   if (btnAdd) {
     btnAdd.addEventListener('click', async () => {
-      const state = getState();
-      const activeId = state.activeAnimalId || (state.animals && state.animals.length > 0 ? state.animals[0].id : null);
-      const rawAnimal = getAnimalById(activeId) || {};
-      const tagToUse = rawAnimal.tagID || 'TR-102';
+      const animal = _getActiveAnimal();
+      if (!animal) return;
+      const tagToUse = animal.id;
 
       // Tür seçimi (tıklanabilir butonlar)
       const typeOptions = TASK_TYPES.map(t => ({ value: t.value, label: t.label, color: t.color }));
@@ -991,6 +952,7 @@ function _initTasksTab() {
         { value: 'Normal', label: 'Normal Öncelik', color: '#3b82f6', icon: '🟢' }
       ], '⚡');
       const prio = prioOption ? prioOption.value : 'Normal';
+      const dueDate = await showPrompt('Son Tarih', 'Görevin vadesi (boş bırakılırsa bugün):', 'date', '📅');
 
       addTask({
         title,
@@ -998,7 +960,8 @@ function _initTasksTab() {
         type: matchedType.value,
         prio,
         scope: 'individual',
-        targetTag: tagToUse
+        targetTag: tagToUse,
+        dueDate
       });
 
       showAlert('Görev Eklendi', `"${title}" görevi ${tagToUse} için eklendi.`, '✅');
@@ -1021,6 +984,13 @@ function _initTasksTab() {
       }
     });
   });
+}
+
+/** Aktif (seçili) hayvan objesi; seçim yoksa sürünün ilk hayvanı */
+function _getActiveAnimal() {
+  const state = getState();
+  const animals = state.animals || [];
+  return getAnimalById(state.activeAnimalId) || animals[0] || null;
 }
 
 function _rerender() {
@@ -1057,58 +1027,35 @@ function _getMedCategoryIcon(category, name) {
 
 function _renderMedicalHistory(animalId) {
   const state = getState();
-  const animal = getAnimalById(animalId);
-  const animalTag = animal ? (animal.tagID || animal.id) : animalId;
+  const ws = getAnimalWithdrawalStatus(animalId);
+  const activeIds = new Set(ws.records.map(r => r.id));
 
-  // 1. Tedavi Kayıtları (treatmentRecords)
-  const tRecords = (state.treatmentRecords || []).filter(r =>
-    r.animalId === animalId || r.animalId === animalTag || (r.batchTargets && (r.batchTargets.includes(animalId) || r.batchTargets.includes(animalTag)))
-  ).map(r => {
-    // Net bireysel dozaj hesaplama
-    const netDose = r.appliedDosePerAnimal || r.dosagePerAnimal || (
-      r.applicationType === 'batch' && r.totalBatchQuantity && r.batchTargets?.length
-        ? parseFloat((r.totalBatchQuantity / r.batchTargets.length).toFixed(2))
-        : r.dosage
-    );
-    return {
-      id: r.id,
-      name: r.medicationName,
-      activeIngredient: r.activeIngredient || '',
-      category: r.category || 'Tedavi',
-      dosageStr: `${netDose} ${r.dosageUnit || 'ml'}`,
-      date: r.applicationDate,
-      type: (r.category === 'Aşı' || (r.medicationName || '').toLowerCase().includes('aşı')) ? 'vaccine' : 'treatment',
-      isActive: r.withdrawals && (
-        new Date(r.withdrawals.meatSafeDate) > new Date() ||
-        new Date(r.withdrawals.milkSafeDate) > new Date()
-      ),
-      courseInfo: r.courseInfo,
-      pregnancyOverride: r.pregnancyOverride,
-      notes: r.notes,
-      source: 'treatmentRecord'
-    };
-  });
-
-  // 2. Aşı Kayıtları (state.vaccines)
-  const vRecords = (state.vaccines || []).filter(v => {
-    const isTarget = v.target === animalId || v.target === animalTag || (v.batchTargets && (v.batchTargets.includes(animalId) || v.batchTargets.includes(animalTag)));
-    const duplicateInTreatment = tRecords.some(tr => tr.name === v.name && tr.date === v.date);
-    return isTarget && !duplicateInTreatment;
-  }).map(v => ({
-    id: v.id,
-    name: v.name,
-    activeIngredient: v.activeIngredient || 'Bağışıklık Aşısı',
-    category: 'Aşı',
-    dosageStr: v.dosage ? `${v.dosage} ml/doz` : '1 doz',
-    date: v.date,
-    type: 'vaccine',
-    isActive: false,
-    notes: v.notes || '',
-    source: 'vaccine'
-  }));
-
-  // Zaman kronolojisine göre birleştir (en yeni üstte)
-  const combined = [...tRecords, ...vRecords].sort((a, b) => new Date(b.date) - new Date(a.date));
+  // Tek kaynak: treatmentRecords (aşılar dahil)
+  const combined = (state.treatmentRecords || [])
+    .filter(r => recordTargetsAnimal(r, animalId))
+    .map(r => {
+      // Net bireysel dozaj
+      const netDose = r.appliedDosePerAnimal ?? r.dosagePerAnimal ?? (
+        r.applicationType === 'batch' && r.totalBatchQuantity && r.batchTargets?.length
+          ? parseFloat((r.totalBatchQuantity / r.batchTargets.length).toFixed(2))
+          : r.dosage
+      );
+      const isVaccine = isVaccineRecord(r);
+      return {
+        id: r.id,
+        name: r.medicationName,
+        activeIngredient: r.activeIngredient || (isVaccine ? 'Bağışıklık Aşısı' : ''),
+        category: isVaccine ? 'Aşı' : (r.category || 'Tedavi'),
+        dosageStr: netDose !== null && netDose !== undefined ? `${netDose} ${r.dosageUnit || 'ml'}` : '1 doz',
+        date: r.applicationDate,
+        type: isVaccine ? 'vaccine' : 'treatment',
+        isActive: activeIds.has(r.id),
+        courseInfo: r.courseInfo,
+        pregnancyOverride: r.pregnancyOverride,
+        notes: r.notes
+      };
+    })
+    .sort((a, b) => new Date(b.date) - new Date(a.date));
 
   if (combined.length === 0) {
     return `

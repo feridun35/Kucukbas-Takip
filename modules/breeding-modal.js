@@ -4,9 +4,10 @@
  * core/breedingManager.js fonksiyonlarını çağırır, doğrudan state yazar.
  */
 
-import { getState, setState } from '../core/state.js';
-import { createMatingRecord, checkInbreedingRisk, syncBreedingTasks, calculateCompatibility } from '../core/breedingManager.js';
-import { addTask } from '../core/workforceManager.js';
+import { todayIso } from '../core/dateUtils.js';
+import { getState } from '../core/state.js';
+import { saveMatingRecord, checkInbreedingRisk, calculateCompatibility } from '../core/breedingManager.js';
+import { getOpenDamMap } from '../core/breedingStatus.js';
 
 // ═══════════════════════════════════════════════════════════
 // Ana Modal Açma Fonksiyonu
@@ -14,9 +15,10 @@ import { addTask } from '../core/workforceManager.js';
 /**
  * Koç katımı modalını açar.
  * @param {string|null} preselectedDamId — Hayvan profilinden geliniyorsa önceden seçili koyun
+ * @param {string|null} preselectedSireId — Koç profilinden geliniyorsa önceden seçili koç
  * @returns {Promise<{saved: boolean}>}
  */
-export function openBreedingModal(preselectedDamId = null) {
+export function openBreedingModal(preselectedDamId = null, preselectedSireId = null) {
   return new Promise((resolve) => {
     const state = getState();
     const animals = state.animals || [];
@@ -24,14 +26,14 @@ export function openBreedingModal(preselectedDamId = null) {
     const males = animals.filter(a => a.gender === 'Erkek');
     const females = animals.filter(a => a.gender === 'Dişi');
 
-    // Gebe olmayan dişiler (aktif breedingRecords kontrolü)
-    const activeBreedingDamIds = new Set();
-    (state.breedingRecords || []).forEach(r => {
-      if (r.status === 'ACTIVE' || r.status === 'PREGNANT') {
-        r.damIds.forEach(id => activeBreedingDamIds.add(id));
-      }
-    });
-    const availableFemales = females.filter(a => !activeBreedingDamIds.has(a.id));
+    // Açık katımı/gebeliği olmayan dişiler (anaç bazında kontrol)
+    const openDams = getOpenDamMap(state.breedingRecords);
+    const availableFemales = females.filter(a => !openDams.has(a.id));
+    const isAvailableDam = (id) => availableFemales.some(a => a.id === id);
+    const isMale = (id) => males.some(a => a.id === id);
+    // Varsayılan seçimlerde yetişkinler öncelikli (kuzu/oğlak listede kalır ama otomatik seçilmez)
+    const isAdult = (a) => !['Kuzu', 'Oğlak'].includes(a.type);
+    const firstAdult = (list) => (list.find(isAdult) || list[0] || null);
 
     // Modal container
     let modalContainer = document.getElementById('breeding-modal-root');
@@ -42,11 +44,16 @@ export function openBreedingModal(preselectedDamId = null) {
     }
 
     let activeTab = 'individual';
-    let selectedSireId = males.length > 0 ? males[0].id : null;
-    let selectedDamId = preselectedDamId || (availableFemales.length > 0 ? availableFemales[0].id : null);
+    let selectedSireId = (preselectedSireId && isMale(preselectedSireId))
+      ? preselectedSireId
+      : (firstAdult(males)?.id || null);
+    let selectedDamId = (preselectedDamId && isAvailableDam(preselectedDamId))
+      ? preselectedDamId
+      : (firstAdult(availableFemales)?.id || null);
+    let saveError = '';
     let selectedGroupSires = new Set();
-    let selectedGroupDams = new Set(availableFemales.map(a => a.id)); // Tüm boş dişiler varsayılan
-    let matingDate = new Date().toISOString().split('T')[0];
+    let selectedGroupDams = new Set(availableFemales.filter(isAdult).map(a => a.id)); // Tüm boş yetişkin dişiler varsayılan
+    let matingDate = todayIso();
     let groupEndDate = '';
     let inbreedingResult = { hasRisk: false, relation: null, details: null };
 
@@ -88,6 +95,7 @@ export function openBreedingModal(preselectedDamId = null) {
             ${activeTab === 'individual' ? _renderIndividualTab(males, availableFemales, selectedSireId, selectedDamId, matingDate, inbreedingResult, compatScore) : _renderGroupTab(males, availableFemales, selectedGroupSires, selectedGroupDams, matingDate, groupEndDate)}
 
             <!-- Aksiyon Butonları -->
+            ${saveError ? `<div style="font-size:0.8rem; color:var(--danger-red); background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.3); border-radius:10px; padding:8px 10px; margin-top:12px;">⚠️ ${saveError}</div>` : ''}
             <div class="c-modal-actions" style="display:flex; gap:12px; margin-top:16px;">
               <button class="btn-secondary" id="btn-breeding-cancel" style="flex:1;">İptal</button>
               <button class="btn-primary" id="btn-breeding-save" style="flex:1; background:${activeTab === 'individual' ? '#f97316' : '#a855f7'}; font-weight:700;">
@@ -269,47 +277,35 @@ export function openBreedingModal(preselectedDamId = null) {
 
       // Kaydet
       btnSave.addEventListener('click', () => {
+        saveError = '';
         if (activeTab === 'individual') {
           if (!selectedSireId || !selectedDamId) return;
 
-          const record = createMatingRecord('INDIVIDUAL', {
+          // Kayıt + gebelik takvimi görevleri (core/breedingManager)
+          const res = saveMatingRecord('INDIVIDUAL', {
             sireIds: [selectedSireId],
             damIds: [selectedDamId],
             startDate: matingDate
-          }, animals);
-
-          // State'e kaydet
-          const currentRecords = [...(getState().breedingRecords || [])];
-          currentRecords.unshift(record);
-          setState({ breedingRecords: currentRecords });
-
-          // Görevleri oluştur
-          const tasks = syncBreedingTasks(record);
-          tasks.forEach(t => addTask(t));
+          });
+          if (!res.success) { saveError = res.message; _renderModal(); return; }
 
           _closeModal();
-          resolve({ saved: true, record });
+          resolve({ saved: true, record: res.record });
 
         } else {
           // GROUP
           if (selectedGroupSires.size === 0 || selectedGroupDams.size === 0) return;
 
-          const record = createMatingRecord('GROUP', {
+          const res = saveMatingRecord('GROUP', {
             sireIds: [...selectedGroupSires],
             damIds: [...selectedGroupDams],
             startDate: matingDate,
             endDate: groupEndDate || null
-          }, animals);
-
-          const currentRecords = [...(getState().breedingRecords || [])];
-          currentRecords.unshift(record);
-          setState({ breedingRecords: currentRecords });
-
-          const tasks = syncBreedingTasks(record);
-          tasks.forEach(t => addTask(t));
+          });
+          if (!res.success) { saveError = res.message; _renderModal(); return; }
 
           _closeModal();
-          resolve({ saved: true, record });
+          resolve({ saved: true, record: res.record });
         }
       });
     }

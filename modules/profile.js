@@ -4,7 +4,7 @@
 
 import { showAlert, showConfirm, showPrompt } from '../core/modal.js';
 import { getState, setState } from '../core/state.js';
-import { getCurrentUser, logout, updateCurrentUser } from '../core/auth.js';
+import { getCurrentUser, logout, updateCurrentUser, claimLegacyData } from '../core/auth.js';
 
 let _container = null;
 
@@ -89,6 +89,19 @@ export function render() {
         <span style="color:var(--text-muted);">❯</span>
       </div>
 
+      ${!isDemo ? `
+      <!-- Eski sürüm hesabının verisini aktar -->
+      <div class="setting-item" id="btn-claim-legacy" style="display:flex; align-items:center; justify-content:space-between; padding:var(--space-md); border-bottom:1px solid var(--glass-border); cursor:pointer; transition:background 0.2s;">
+        <div style="display:flex; align-items:center; gap:12px;">
+          <span style="font-size:1.2rem;">📦</span>
+          <div>
+            <h4 style="font-size:1rem; color:var(--text-primary);">Eski Hesap Verisini Aktar</h4>
+            <p style="font-size:0.75rem; color:var(--text-muted);">Eski sürümdeki çiftlik verinizi bu hesaba taşıyın</p>
+          </div>
+        </div>
+        <span style="color:var(--text-muted);">❯</span>
+      </div>` : ''}
+
       <!-- Setting Item -->
       <div class="setting-item" id="btn-sensor-rate" style="display:flex; align-items:center; justify-content:space-between; padding:var(--space-md); cursor:pointer; transition:background 0.2s;">
         <div style="display:flex; align-items:center; gap:12px;">
@@ -164,6 +177,16 @@ export function init() {
     });
   }
 
+  const btnClaim = _container.querySelector('#btn-claim-legacy');
+  if (btnClaim) {
+    btnClaim.addEventListener('click', async () => {
+      const oldPassword = await showPrompt('Eski Hesap Verisini Aktar', 'Aynı e-posta ile kullandığınız ESKİ sürüm şifrenizi giriniz. Mevcut kayıtlarınız silinmez, eski kayıtlar eklenir.', 'password', '📦');
+      if (!oldPassword) return;
+      const res = await claimLegacyData(oldPassword);
+      await showAlert(res.success ? 'Aktarıldı' : 'Aktarılamadı', res.message, res.success ? '✅' : '⚠️');
+    });
+  }
+
   const btnSensors = _container.querySelector('#btn-sensor-rate');
   if (btnSensors) {
     btnSensors.addEventListener('click', async () => {
@@ -180,7 +203,7 @@ export function init() {
     btnLogout.addEventListener('click', async () => {
       const answer = await showConfirm('Sistemden Çıkış', 'Hesabınızdan çıkmak ve oturumu kapatmak istediğinize emin misiniz?', '🚪');
       if (answer) {
-        logout();
+        await logout();
       }
     });
   }

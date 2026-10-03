@@ -3,6 +3,7 @@
  * State-driven: Görevler state.tasks / state.taskHistory üzerinden yönetilir.
  */
 
+import { todayIso } from '../core/dateUtils.js';
 import { getState, setState } from '../core/state.js';
 import { 
   getTasksForUser, 
@@ -153,8 +154,8 @@ async function _showAddTaskFlow(scope, animalTag) {
   const prio = prioOption ? prioOption.value : 'Normal';
 
   // 5. Vade Tarihi (dueDate)
-  const todayDefault = new Date().toISOString().split('T')[0];
-  const dueDate = await showPrompt('Son Tarih (YYYY-MM-DD)', 'Görevin vadesi (Varsayılan: Bugün):', 'text', todayDefault) || todayDefault;
+  const todayDefault = todayIso();
+  const dueDate = await showPrompt('Son Tarih', 'Görevin vadesi (boş bırakılırsa bugün):', 'date', '📅') || todayDefault;
 
   // Ekle
   const newTask = addTask({

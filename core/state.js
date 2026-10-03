@@ -4,6 +4,7 @@
  * Her kiracının (tenant/hesap) verisi izole LocalStorage anahtarıyla saklanır.
  */
 
+import { todayIso, addDaysIso } from './dateUtils.js';
 import {
   mockHerdData,
   mockHealthData,
@@ -14,10 +15,30 @@ import {
   mockTasks
 } from '../data/mock-data.js';
 import { syncHerdMathState } from './herdMathEngine.js';
-import { pushLocalStateToCloud, pullCloudStateToLocal, setCloudLoadDone, isCloudLoadDone } from './syncManager.js';
+import { migrateTenantData, CURRENT_SCHEMA_VERSION } from './migrations.js';
+import { mergeFarmPayloads } from './syncMerge.js';
+import { pushLocalStateToCloud, syncOnLoad, setCloudLoadDone, setSyncStatus, SYNC_STATUS } from './syncManager.js';
+
+// ── Anahtar Sınıfları ──
+// Hiçbir yere yazılmayan oturum anahtarları
+const SESSION_KEYS = ['currentPage', 'currentUser', 'currentTenantKey'];
+// Yalnızca bu cihazın localStorage'ında tutulan, buluta gönderilmeyen ve buluttan ezilmeyen anahtarlar
+const DEVICE_LOCAL_KEYS = ['activeAnimalId', 'userRole', 'sensors'];
+// Her setState'te yeniden hesaplanan türetilmiş özetler (buluta gönderilmez)
+const DERIVED_KEYS = ['herdSummary', 'healthSummary', 'financeSummary'];
+
+/** State değişikliğinin kaynağı — aboneler buna göre tepki verir */
+export const STATE_SOURCES = {
+  LOCAL: 'local',     // Bu cihazdaki kullanıcı/motor işlemi
+  CLOUD: 'cloud',     // Başka cihazdan gelen bulut güncellemesi
+  LOAD: 'load',       // Oturum açılışı / kiracı yükleme
+  SENSORS: 'sensors', // Sensör telemetrisi
+  RESET: 'reset'      // Oturum kapatma
+};
 
 // Varsayılan boş state şablonu
 const EMPTY_STATE_TEMPLATE = {
+  schemaVersion: CURRENT_SCHEMA_VERSION,
   currentPage: 'dashboard',
   focusMode: 'meat',
   userRole: 'owner',
@@ -71,7 +92,6 @@ const EMPTY_STATE_TEMPLATE = {
     costPerHead: 0
   },
   alerts: [],
-  vaccines: [],
   tasks: [],
   taskHistory: [],
   feedInventory: [],
@@ -92,7 +112,7 @@ const _subscribers = new Set();
 
 /**
  * State değişikliklerini dinle
- * @param {Function} callback - (newState) => void
+ * @param {Function} callback - (newState, meta: { source, keys }) => void
  * @returns {Function} unsubscribe fonksiyonu
  */
 export function subscribe(callback) {
@@ -101,12 +121,13 @@ export function subscribe(callback) {
 }
 
 /**
- * State'i güncelle, aboneleri bilgilendir ve aktif kiracının LocalStorage alanına yaz
+ * State'i güncelle, aboneleri bilgilendir ve aktif kiracının LocalStorage alanına yaz.
+ * Yalnızca oturum/cihaz-yerel anahtarları değişiyorsa buluta push yapılmaz.
  * @param {Object} partial - güncellenecek kısmi state
  */
 export function setState(partial) {
   const keys = Object.keys(partial);
-  const isOnlySensors = keys.length === 1 && keys[0] === 'sensors';
+  if (keys.length === 0) return;
 
   keys.forEach(key => {
     if (typeof partial[key] === 'object' && partial[key] !== null && !Array.isArray(partial[key])) {
@@ -116,11 +137,18 @@ export function setState(partial) {
     }
   });
 
-  // Otomatik Akıllı Sürü & Matematik Motoru senkronizasyonu
-  syncHerdMathState(AppState);
+  const isSessionOnly = keys.every(k => SESSION_KEYS.includes(k));
+  const isLocalOnly = keys.every(k => SESSION_KEYS.includes(k) || DEVICE_LOCAL_KEYS.includes(k));
 
-  _persistTenantState({ skipCloudPush: isOnlySensors });
-  _notifySubscribers();
+  // Oturum anahtarları (örn. currentPage) sürü verisini değiştirmez — yeniden hesaplama ve kayıt gereksiz
+  if (!isSessionOnly) {
+    // Otomatik Akıllı Sürü & Matematik Motoru senkronizasyonu
+    syncHerdMathState(AppState);
+    _persistTenantState({ skipCloudPush: isLocalOnly });
+  }
+
+  const source = keys.length === 1 && keys[0] === 'sensors' ? STATE_SOURCES.SENSORS : STATE_SOURCES.LOCAL;
+  _notifySubscribers({ source, keys });
 }
 
 /**
@@ -143,7 +171,8 @@ export function getAnimalById(id) {
  * Demo hesabı için zengin başlangıç verisi üretir
  */
 export function getInitialDemoState() {
-  return {
+  // Demo tohumu eski (v1) formatta yazılmıştır; göç katmanından geçirilerek güncel şemaya yükseltilir.
+  return migrateTenantData({
     focusMode: 'meat',
     userRole: 'owner',
     activeAnimalId: 'TR-102',
@@ -196,11 +225,11 @@ export function getInitialDemoState() {
       }
     ],
     pharmacyStock: [
-      { id: 'PS-001', medicationId: 'primamycin-la', batchNo: 'LOT-2026A', totalQuantity: 100, remainingQuantity: 72, unit: 'ml', criticalThreshold: 20, expiryDate: '2027-06-15', openedDate: '2026-02-20' },
+      { id: 'PS-001', medicationId: 'primamycin-la', batchNo: 'LOT-2026A', totalQuantity: 100, remainingQuantity: 72, unit: 'ml', criticalThreshold: 20, expiryDate: '2027-06-15', openedDate: addDaysIso(todayIso(), -10) },
       { id: 'PS-002', medicationId: 'dectomax', batchNo: 'LOT-2026B', totalQuantity: 200, remainingQuantity: 145, unit: 'ml', criticalThreshold: 30, expiryDate: '2027-12-01', openedDate: null },
-      { id: 'PS-003', medicationId: 'ketogezik', batchNo: 'LOT-2025X', totalQuantity: 50, remainingQuantity: 12, unit: 'ml', criticalThreshold: 15, expiryDate: '2026-11-30', openedDate: '2026-03-01' },
+      { id: 'PS-003', medicationId: 'ketogezik', batchNo: 'LOT-2025X', totalQuantity: 50, remainingQuantity: 12, unit: 'ml', criticalThreshold: 15, expiryDate: addDaysIso(todayIso(), 60), openedDate: addDaysIso(todayIso(), -6) },
       { id: 'PS-004', medicationId: 'e-sevit', batchNo: 'LOT-2026C', totalQuantity: 100, remainingQuantity: 88, unit: 'ml', criticalThreshold: 20, expiryDate: '2027-09-20', openedDate: null },
-      { id: 'PS-005', medicationId: 'amoxylin-la', batchNo: 'LOT-2026D', totalQuantity: 100, remainingQuantity: 65, unit: 'ml', criticalThreshold: 25, expiryDate: '2027-03-10', openedDate: '2026-01-15' }
+      { id: 'PS-005', medicationId: 'amoxylin-la', batchNo: 'LOT-2026D', totalQuantity: 100, remainingQuantity: 65, unit: 'ml', criticalThreshold: 25, expiryDate: '2027-03-10', openedDate: addDaysIso(todayIso(), -3) }
     ],
     treatmentRecords: [
       {
@@ -233,14 +262,14 @@ export function getInitialDemoState() {
         type: 'INDIVIDUAL',
         sireIds: ['TR-210'],
         damIds: ['TR-102'],
-        startDate: new Date(Date.now() - 95 * 86400000).toISOString().split('T')[0],
+        startDate: addDaysIso(todayIso(), -95),
         endDate: null,
         status: 'PREGNANT',
         milestones: {
-          cycleCheckDate: new Date(Date.now() - 78 * 86400000).toISOString().split('T')[0],
-          ultrasoundDate: new Date(Date.now() - 50 * 86400000).toISOString().split('T')[0],
-          lateGestationDate: new Date(Date.now() + 20 * 86400000).toISOString().split('T')[0],
-          expectedBirthDate: new Date(Date.now() + 53 * 86400000).toISOString().split('T')[0]
+          cycleCheckDate: addDaysIso(todayIso(), -78),
+          ultrasoundDate: addDaysIso(todayIso(), -50),
+          lateGestationDate: addDaysIso(todayIso(), 20),
+          expectedBirthDate: addDaysIso(todayIso(), 53)
         },
         inbreedingWarning: null,
         birthRecord: null
@@ -250,20 +279,20 @@ export function getInitialDemoState() {
         type: 'GROUP',
         sireIds: ['TR-210'],
         damIds: ['TR-045', 'TR-088'],
-        startDate: new Date(Date.now() - 160 * 86400000).toISOString().split('T')[0],
-        endDate: new Date(Date.now() - 145 * 86400000).toISOString().split('T')[0],
+        startDate: addDaysIso(todayIso(), -160),
+        endDate: addDaysIso(todayIso(), -145),
         status: 'COMPLETED',
         milestones: {
-          cycleCheckDate: new Date(Date.now() - 143 * 86400000).toISOString().split('T')[0],
-          ultrasoundDate: new Date(Date.now() - 115 * 86400000).toISOString().split('T')[0],
-          lateGestationDate: new Date(Date.now() - 45 * 86400000).toISOString().split('T')[0],
-          expectedBirthDate: new Date(Date.now() - 12 * 86400000).toISOString().split('T')[0]
+          cycleCheckDate: addDaysIso(todayIso(), -143),
+          ultrasoundDate: addDaysIso(todayIso(), -115),
+          lateGestationDate: addDaysIso(todayIso(), -45),
+          expectedBirthDate: addDaysIso(todayIso(), -12)
         },
         inbreedingWarning: null,
-        birthRecord: { date: new Date(Date.now() - 10 * 86400000).toISOString().split('T')[0], type: 'Normal', lambCount: 2 }
+        birthRecord: { date: addDaysIso(todayIso(), -10), type: 'Normal', lambCount: 2 }
       }
     ]
-  };
+  });
 }
 
 /**
@@ -271,6 +300,7 @@ export function getInitialDemoState() {
  */
 export function getInitialBlankState(user) {
   return {
+    schemaVersion: CURRENT_SCHEMA_VERSION,
     focusMode: 'meat',
     userRole: user?.role || 'owner',
     activeAnimalId: null,
@@ -294,7 +324,6 @@ export function getInitialBlankState(user) {
     animals: [],
     tasks: [],
     taskHistory: [],
-    vaccines: [],
     feedInventory: [],
     feedHistory: [],
     mortalityRecords: [],
@@ -303,6 +332,11 @@ export function getInitialBlankState(user) {
     customMedications: [],
     breedingRecords: []
   };
+}
+
+/** Kullanıcı demo hesabı mı? Demo verisi yalnızca bu cihazda yaşar, buluta hiç gitmez. */
+function _isDemoUser(user) {
+  return Boolean(user && (user.isDemo || user.id === 'demo'));
 }
 
 /**
@@ -325,77 +359,86 @@ export function loadTenantState(user) {
   try {
     const rawData = localStorage.getItem(user.storageKey);
     if (rawData) {
-      // Daha önce kaydedilmiş yerel veri varsa onu yükle
-      const parsed = JSON.parse(rawData);
+      // Daha önce kaydedilmiş yerel veri varsa güncel şemaya yükseltip yükle
+      const parsed = migrateTenantData(JSON.parse(rawData));
       Object.keys(parsed).forEach(k => {
-        AppState[k] = parsed[k];
+        if (!SESSION_KEYS.includes(k)) AppState[k] = parsed[k];
       });
-      syncHerdMathState(AppState);
     } else {
       // Kaydedilmiş veri yoksa hesap türüne göre ilk veriyi ata
-      const isDemo = user.id === 'demo' || user.isDemo;
-      const initialData = isDemo ? getInitialDemoState() : getInitialBlankState(user);
-      
+      const initialData = _isDemoUser(user) ? getInitialDemoState() : getInitialBlankState(user);
       Object.keys(initialData).forEach(k => {
         AppState[k] = initialData[k];
       });
-      syncHerdMathState(AppState);
-      
-      // İlk veriyi LocalStorage'a kaydet
-      localStorage.setItem(user.storageKey, JSON.stringify(AppState));
     }
+    syncHerdMathState(AppState);
+    localStorage.setItem(user.storageKey, JSON.stringify(_localPayload()));
   } catch (e) {
     console.error('[State] Error loading tenant state:', e);
   }
 
-  _notifySubscribers();
+  _notifySubscribers({ source: STATE_SOURCES.LOAD, keys: Object.keys(AppState) });
 
-  // Bulut Verisini Çek ve Eşitle (Arka planda asenkron)
-  pullCloudStateToLocal(user.storageKey).then(cloudPayload => {
-    if (cloudPayload && typeof cloudPayload === 'object' && Object.keys(cloudPayload).length > 0) {
-      console.log('[State] ☁️ Buluttan gelen en güncel veri yerel state ile eşitleniyor...');
-      applyCloudState(cloudPayload);
-    } else {
-      // Bulutta kayıt yoksa mevcut yerel veriyi buluta gönder
-      setCloudLoadDone(user.storageKey, true);
-      _persistTenantState();
-    }
+  // Demo hesabı tamamen yerel çalışır
+  if (_isDemoUser(user)) {
     setCloudLoadDone(user.storageKey, true);
-  }).catch(err => {
-    console.error('[State] Cloud pull error:', err);
-    setCloudLoadDone(user.storageKey, true);
-  });
+    setSyncStatus(SYNC_STATUS.LOCAL);
+    return;
+  }
+
+  // Bulutla eşitle (arka planda). Gönderilmemiş yerel değişiklikler korunur; gerekirse birleştirilir.
+  syncOnLoad(user.storageKey);
 }
 
 /**
- * Buluttan gelen state yükünü mevcut AppState'e uygular
+ * Buluttan gelen state yükünü mevcut AppState'e uygular.
+ * Cihaz-yerel anahtarlar (aktif hayvan, rol görünümü, sensörler) ezilmez.
+ * Aboneler `source: 'cloud'` ile bilgilendirilir — router açık sayfayı yeniden çizer.
  */
 export function applyCloudState(cloudPayload) {
   if (!cloudPayload || typeof cloudPayload !== 'object') return;
 
-  Object.keys(cloudPayload).forEach(k => {
-    if (k !== 'currentPage' && k !== 'currentUser' && k !== 'currentTenantKey') {
-      AppState[k] = cloudPayload[k];
-    }
+  const migrated = migrateTenantData(cloudPayload);
+  const appliedKeys = [];
+
+  Object.keys(migrated).forEach(k => {
+    if (SESSION_KEYS.includes(k) || DEVICE_LOCAL_KEYS.includes(k) || DERIVED_KEYS.includes(k)) return;
+    AppState[k] = migrated[k];
+    appliedKeys.push(k);
   });
+
+  // Aktif hayvan artık sürüde yoksa seçimi temizle
+  if (AppState.activeAnimalId && !(AppState.animals || []).some(a => a.id === AppState.activeAnimalId)) {
+    AppState.activeAnimalId = null;
+  }
 
   syncHerdMathState(AppState);
 
   if (AppState.currentTenantKey) {
     try {
-      const dataToSave = {};
-      Object.keys(AppState).forEach(key => {
-        if (key !== 'currentPage' && key !== 'currentUser' && key !== 'currentTenantKey') {
-          dataToSave[key] = AppState[key];
-        }
-      });
-      localStorage.setItem(AppState.currentTenantKey, JSON.stringify(dataToSave));
+      localStorage.setItem(AppState.currentTenantKey, JSON.stringify(_localPayload()));
     } catch (e) {
       console.error('[State] Error saving applied cloud state to localStorage:', e);
     }
   }
 
-  _notifySubscribers();
+  _notifySubscribers({ source: STATE_SOURCES.CLOUD, keys: appliedKeys });
+}
+
+/**
+ * Dışarıdan gelen bir çiftlik yükünü (örn. eski hesabın verisi) mevcut çiftlikle KAYIT BAZINDA birleştirir.
+ * Hiçbir mevcut kayıt silinmez; aynı kimlikli kayıtta mevcut veri korunur. Sonuç normal yerel değişiklik
+ * gibi kaydedilir ve buluta gönderilir.
+ */
+export function importFarmData(payload) {
+  if (!payload || typeof payload !== 'object') return;
+  const merged = mergeFarmPayloads(null, getCloudPayload(), migrateTenantData(payload));
+  const update = {};
+  Object.keys(merged).forEach(k => {
+    if (SESSION_KEYS.includes(k) || DEVICE_LOCAL_KEYS.includes(k) || DERIVED_KEYS.includes(k)) return;
+    update[k] = merged[k];
+  });
+  setState(update);
 }
 
 /**
@@ -414,16 +457,18 @@ export function initNewTenantState(user) {
   Object.keys(blankState).forEach(k => {
     AppState[k] = blankState[k];
   });
+  syncHerdMathState(AppState);
 
   try {
-    localStorage.setItem(user.storageKey, JSON.stringify(blankState));
+    localStorage.setItem(user.storageKey, JSON.stringify(_localPayload()));
   } catch (e) {
     console.error('[State] Error initializing new tenant state:', e);
   }
 
-  _notifySubscribers();
-  setCloudLoadDone(user.storageKey, true);
-  _persistTenantState();
+  _notifySubscribers({ source: STATE_SOURCES.LOAD, keys: Object.keys(AppState) });
+  setCloudLoadDone(user.storageKey, false);
+  // Bulutta kayıt yoksa bu boş çiftlik yazılır; varsa (örn. başka cihazdan) o alınır
+  syncOnLoad(user.storageKey);
 }
 
 /**
@@ -431,7 +476,7 @@ export function initNewTenantState(user) {
  */
 export function clearTenantState() {
   _resetMemoryState();
-  _notifySubscribers();
+  _notifySubscribers({ source: STATE_SOURCES.RESET, keys: [] });
 }
 
 /**
@@ -451,45 +496,47 @@ function _resetMemoryState() {
   });
 }
 
+/** localStorage'a yazılacak yük: oturum anahtarları hariç her şey */
+function _localPayload() {
+  const data = {};
+  Object.keys(AppState).forEach(key => {
+    if (!SESSION_KEYS.includes(key)) data[key] = AppState[key];
+  });
+  return data;
+}
+
+/** Buluta gönderilecek yük: yalnızca çiftlik verisi (cihaz-yerel ve türetilmiş alanlar hariç) */
+export function getCloudPayload() {
+  const data = {};
+  Object.keys(AppState).forEach(key => {
+    if (SESSION_KEYS.includes(key) || DEVICE_LOCAL_KEYS.includes(key) || DERIVED_KEYS.includes(key)) return;
+    data[key] = AppState[key];
+  });
+  return data;
+}
+
 function _persistTenantState(options = {}) {
-  let tenantKey = AppState.currentTenantKey;
-  if (!tenantKey) {
-    try {
-      const userRaw = localStorage.getItem('shepherd_current_user');
-      if (userRaw) {
-        const u = JSON.parse(userRaw);
-        tenantKey = u.storageKey;
-        AppState.currentTenantKey = tenantKey;
-        AppState.currentUser = u;
-      }
-    } catch(e) {}
-  }
+  const tenantKey = AppState.currentTenantKey;
   if (!tenantKey) return;
 
   try {
-    const dataToSave = {};
-    Object.keys(AppState).forEach(key => {
-      if (key !== 'currentPage' && key !== 'currentUser' && key !== 'currentTenantKey') {
-        dataToSave[key] = AppState[key];
-      }
-    });
+    localStorage.setItem(tenantKey, JSON.stringify(_localPayload()));
 
-    localStorage.setItem(tenantKey, JSON.stringify(dataToSave));
-    console.log(`[Storage] ✅ Durum '${tenantKey}' anahtarına başarıyla kaydedildi.`);
-
-    // Yalnızca donanım sensör güncellemesi değilse ve ilk bulut yüklemesi yapılmışsa buluta gönder
-    if (options.skipCloudPush !== true && isCloudLoadDone(tenantKey)) {
-      pushLocalStateToCloud(tenantKey, dataToSave);
+    // Demo hesabı ve cihaz-yerel güncellemeler buluta gönderilmez. Diğer her değişiklik "kirli" işaretlenir;
+    // syncManager bulut eşitlemesi tamamlanınca / bağlantı gelince gönderir (veri kaybolmaz).
+    if (options.skipCloudPush !== true && !_isDemoUser(AppState.currentUser)) {
+      pushLocalStateToCloud(tenantKey);
     }
   } catch (e) {
     console.error('[State] Error persisting tenant state:', e);
   }
 }
 
-function _notifySubscribers() {
+function _notifySubscribers(meta = { source: STATE_SOURCES.LOCAL, keys: [] }) {
+  if (_subscribers.size === 0) return;
   const snapshot = getState();
   _subscribers.forEach(cb => {
-    try { cb(snapshot); } catch (e) { console.error('[State] Subscriber error:', e); }
+    try { cb(snapshot, meta); } catch (e) { console.error('[State] Subscriber error:', e); }
   });
 }
 

@@ -7,6 +7,8 @@
 import { getState, setState, subscribe } from '../core/state.js';
 import { getCurrentUser } from '../core/auth.js';
 import { getAllQuarantinedAnimals } from '../core/healthManager.js';
+import { calculateAverageDailyGain } from '../core/herdMathEngine.js';
+import { getPregnantAnimalIds } from '../core/breedingStatus.js';
 
 let _container = null;
 
@@ -220,67 +222,66 @@ function _renderFocusSelector(activeMode) {
 }
 
 /**
- * Verim Odağına göre dinamik ve gerçekçi KPI hesaplama
- */
-/**
- * Verim Odağına göre dinamik ve gerçekçi KPI hesaplama
+ * Verim odağına göre KPI'lar — yalnızca kayıtlı veriden hesaplanır.
+ * Hesaplanamayan değer "Veri yok" gösterilir (sabit/uydurma değer kullanılmaz).
  */
 function _calculateDynamicKPIs(mode, state) {
   const animals = state.animals || [];
-  const total = animals.length;
-
-  if (total === 0) {
-    return [
-      { label: mode === 'milk' ? 'Sağmal Hayvan' : mode === 'breed' ? 'Gebelik Oranı' : 'Ort. Canlı Ağırlık', value: 'Kayıt Yok' },
-      { label: mode === 'milk' ? 'Günlük Süt Üretimi' : mode === 'breed' ? 'Koç Katım Oranı' : 'Karkas Randımanı', value: 'Kayıt Yok' },
-      { label: mode === 'milk' ? 'Ort. Süt/Baş' : mode === 'breed' ? 'İkizlik Oranı' : 'Günlük Ağırlık Artışı', value: 'Kayıt Yok' },
-      { label: mode === 'milk' ? 'Laktasyon Süresi' : mode === 'breed' ? 'Kuzu Yaşama Gücü' : 'Yemden Yararlanma', value: 'Kayıt Yok' }
-    ];
-  }
-
-  const weights = animals.map(a => parseFloat(a.weight)).filter(w => !isNaN(w) && w > 0);
-  const avgWNum = weights.length > 0 ? (weights.reduce((s, w) => s + w, 0) / weights.length) : 0;
-  const avgW = avgWNum > 0 ? `${avgWNum.toFixed(1)} kg` : 'Bilinmiyor';
-
-  const females = animals.filter(a => a.gender === 'Dişi');
-  const pregnant = animals.filter(a => a.group === 'Gebe');
-  const pregRate = females.length > 0 ? `%${Math.round((pregnant.length / females.length) * 100)}` : '%0';
-
-  const rams = animals.filter(a => a.gender === 'Erkek' && (a.type === 'Koç' || a.type === 'Teke' || a.group === 'Damızlık'));
-  const ramRatio = (rams.length > 0 && females.length > 0) ? `1:${Math.round(females.length / rams.length)}` : '1:0';
+  const NO_DATA = 'Veri yok';
+  const young = ['Kuzu', 'Oğlak'];
+  const fmtPct = (num, den) => den > 0 ? `%${Math.round((num / den) * 100)}` : NO_DATA;
 
   if (mode === 'meat') {
-    const carcassYield = avgWNum > 0 ? '%48.5' : 'Bilinmiyor';
-    const dailyGain = animals.some(a => a.group === 'Besi' || a.type === 'Kuzu') ? '245 g/gün' : '180 g/gün';
+    const weights = animals.map(a => parseFloat(a.weight)).filter(w => w > 0);
+    const avgW = weights.length ? `${(weights.reduce((s, w) => s + w, 0) / weights.length).toFixed(1)} kg` : NO_DATA;
+    const gains = animals.map(calculateAverageDailyGain).filter(g => g !== null);
+    const avgGain = gains.length ? `${Math.round(gains.reduce((s, g) => s + g, 0) / gains.length * 1000)} g/gün` : NO_DATA;
+    const besi = animals.filter(a => a.group === 'Besi');
+    const quarantined = new Set(getAllQuarantinedAnimals().filter(q => q.meatDaysLeft > 0).map(q => q.animalId));
+    const saleReady = besi.filter(a => !quarantined.has(a.id)).length;
     return [
       { label: 'Ort. Canlı Ağırlık', value: avgW },
-      { label: 'Karkas Randımanı', value: carcassYield },
-      { label: 'Günlük Ağırlık Artışı', value: dailyGain },
-      { label: 'Yemden Yararlanma', value: '5.8 kg/kg' }
-    ];
-  } else if (mode === 'milk') {
-    const milkingCount = animals.filter(a => a.group === 'Sağmal').length;
-    let estMilk = 0;
-    animals.filter(a => a.group === 'Sağmal').forEach(a => {
-      estMilk += (a.breed === 'Saanen' || a.type === 'Keçi') ? 2.5 : 1.25;
-    });
-    const avgPerHead = milkingCount > 0 ? (estMilk / milkingCount).toFixed(2) : '0';
-
-    return [
-      { label: 'Sağmal Hayvan', value: `${milkingCount} baş` },
-      { label: 'Günlük Süt Üretimi', value: `${estMilk.toFixed(0)} lt` },
-      { label: 'Ort. Süt/Baş', value: `${avgPerHead} lt/gün` },
-      { label: 'Laktasyon Süresi', value: '185 gün' }
-    ];
-  } else {
-    const twinsRate = females.length > 0 ? '%34' : '%0';
-    return [
-      { label: 'Gebelik Oranı', value: pregRate },
-      { label: 'Koç Katım Oranı', value: ramRatio },
-      { label: 'İkizlik Oranı', value: twinsRate },
-      { label: 'Kuzu Yaşama Gücü', value: '%92' }
+      { label: 'Ort. Günlük Artış', value: avgGain },
+      { label: 'Besi Hayvanı', value: `${besi.length} baş` },
+      { label: 'Kesime Uygun (Besi)', value: `${saleReady} baş` }
     ];
   }
+
+  if (mode === 'milk') {
+    const milking = animals.filter(a => a.group === 'Sağmal');
+    const milkWithdrawal = new Set(getAllQuarantinedAnimals().filter(q => q.milkDaysLeft > 0).map(q => q.animalId));
+    const inWithdrawal = milking.filter(a => milkWithdrawal.has(a.id)).length;
+    const bcs = milking.map(a => parseFloat(a.bcs)).filter(b => b > 0);
+    return [
+      { label: 'Sağmal Hayvan', value: `${milking.length} baş` },
+      { label: 'Sütü Satılabilir', value: `${milking.length - inWithdrawal} baş` },
+      { label: 'Süt Arınmasında', value: `${inWithdrawal} baş` },
+      { label: 'Ort. VKS (Sağmal)', value: bcs.length ? (bcs.reduce((s, b) => s + b, 0) / bcs.length).toFixed(1) : NO_DATA }
+    ];
+  }
+
+  // Döl verimi
+  const adultFemales = animals.filter(a => a.gender === 'Dişi' && !young.includes(a.type));
+  const adultMales = animals.filter(a => a.gender === 'Erkek' && !young.includes(a.type));
+  const pregnant = new Set(getPregnantAnimalIds(animals, state.breedingRecords));
+  const pregnantAdults = adultFemales.filter(a => pregnant.has(a.id)).length;
+
+  const births = [];
+  (state.breedingRecords || []).forEach(r => {
+    if (Array.isArray(r.births) && r.births.length) births.push(...r.births);
+    else if (r.birthRecord) births.push({ lambCount: r.birthRecord.lambCount || 1, babyIds: [] });
+  });
+  const multiples = births.filter(b => (b.lambCount || 1) >= 2).length;
+  const aliveIds = new Set(animals.map(a => a.id));
+  const babyIds = births.flatMap(b => b.babyIds || []);
+  const survived = babyIds.filter(id => aliveIds.has(id)).length;
+
+  return [
+    { label: 'Gebelik Oranı', value: fmtPct(pregnantAdults, adultFemales.length) },
+    { label: 'Koç : Anaç', value: adultMales.length && adultFemales.length ? `1:${Math.round(adultFemales.length / adultMales.length)}` : NO_DATA },
+    { label: 'İkizlik Oranı', value: fmtPct(multiples, births.length) },
+    { label: 'Yavru Yaşama Oranı', value: fmtPct(survived, babyIds.length) }
+  ];
 }
 
 function _renderKPIRow(mode, state) {
@@ -306,7 +307,7 @@ function _computeHerdStats(state) {
   const sick = animals.filter(a => a.status === 'danger').length;
   const quarantinedList = getAllQuarantinedAnimals();
   const quarantine = quarantinedList.length;
-  const expectedBirths = animals.filter(a => a.group === 'Gebe').length;
+  const expectedBirths = getPregnantAnimalIds(animals, state.breedingRecords).length;
 
   return { total, sheep, goat, avgWeight, sick, quarantine, quarantinedList, expectedBirths };
 }

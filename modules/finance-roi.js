@@ -2,7 +2,8 @@
  * ShepherdAI — Ekonomik ROI Paneli
  */
 import { getState } from '../core/state.js';
-import { calculateAnimalROI } from '../core/financeEngine.js';
+import { calculateAnimalROI, calculateDailyFeedCostPerHead } from '../core/financeEngine.js';
+import { getPregnantAnimalIds } from '../core/breedingStatus.js';
 import { showAlert } from '../core/modal.js';
 
 let _container = null;
@@ -22,7 +23,11 @@ export function render() {
   _container.innerHTML = `
     <div class="section-title"><span class="dot" style="background:#fbbf24"></span>Sürü Genel ROI Analizi</div>
     ${_renderHeader(sampleROI, 'HERD')}
-    ${_renderFocusMetric(currentMode)}
+    ${sampleROI.assumptions?.length ? `
+      <p style="font-size:0.72rem; color:var(--text-muted); padding:0 var(--space-md); margin-top:6px; line-height:1.4;">
+        ℹ️ Tahmini hesap. Varsayımlar: ${sampleROI.assumptions.join('; ')}.
+      </p>` : ''}
+    ${_renderFocusMetric(currentMode, state)}
     
     <div style="position:relative !important; margin-top:var(--space-2xl); margin-bottom:var(--space-xl); width:calc(100% - var(--space-lg)*2); max-width:440px; margin-left:auto; margin-right:auto; display:flex; gap:12px;">
       <button class="huge-btn btn-primary" id="btn-quick-sell" style="width:100%; border-radius:24px; padding:16px; font-size:1.1rem;">
@@ -68,7 +73,7 @@ function _renderHeader(roiData, testAnimalId) {
           <h2 style="font-size:var(--font-size-md); font-weight:700; color:var(--text-primary)">
             ${testAnimalId === 'HERD' ? 'Toplam Sürü Bütçesi' : `Bireysel Analiz (${testAnimalId})`}
           </h2>
-          <p style="font-size:var(--font-size-sm); color:var(--text-muted)">Güncel Piyasa Değeri</p>
+          <p style="font-size:var(--font-size-sm); color:var(--text-muted)">Tahmini Piyasa Değeri</p>
         </div>
         <div class="fintech-value ${colorClass}">
           ${(roiData.netValue || 0).toLocaleString('tr-TR')} ₺
@@ -102,11 +107,18 @@ function _renderHeader(roiData, testAnimalId) {
   `;
 }
 
-function _renderFocusMetric(mode) {
-  let title = '', val = '', sub = '', icon = '';
-  if (mode === 'meat') { title = 'Canlı Ağırlık Artışı Maliyeti'; val = '14.50 ₺'; sub = '/ baş / gün'; icon = '🥩'; }
-  else if (mode === 'milk') { title = '1 Litre Süt Üretim Maliyeti'; val = '8.20 ₺'; sub = '/ litre'; icon = '🥛'; }
-  else { title = 'Kuzu Başına Doğum Maliyeti'; val = '1,250 ₺'; sub = 'Yem + Bakım'; icon = '🐑'; }
+function _renderFocusMetric(mode, state) {
+  // Odak grubunun baş başına günlük yem maliyeti (depodaki yem fiyatlarından)
+  let title = '', filter, icon = '';
+  if (mode === 'meat') { title = 'Besi Hayvanı Günlük Yem Maliyeti'; filter = a => a.group === 'Besi'; icon = '🥩'; }
+  else if (mode === 'milk') { title = 'Sağmal Hayvan Günlük Yem Maliyeti'; filter = a => a.group === 'Sağmal'; icon = '🥛'; }
+  else {
+    const pregnant = new Set(getPregnantAnimalIds(state.animals, state.breedingRecords));
+    title = 'Gebe Hayvan Günlük Yem Maliyeti'; filter = a => pregnant.has(a.id); icon = '🐑';
+  }
+  const calc = calculateDailyFeedCostPerHead(filter);
+  const val = calc ? `${calc.perHead.toFixed(2)} ₺` : 'Hayvan yok';
+  const sub = calc ? `/ baş / gün (${calc.headCount} baş)` : '';
 
   return `
     <div class="fintech-focus-card">

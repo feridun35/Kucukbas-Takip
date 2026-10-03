@@ -15,9 +15,14 @@ export function render() {
   _container.innerHTML = `
     <div class="section-title"><span class="dot" style="background:#ef4444"></span>Ayıklama Önerileri (Culling)</div>
     <p style="color:var(--text-muted); font-size:0.85rem; padding:0 var(--space-md) var(--space-md); margin-top:-10px;">
-      Aşağıdaki liste, sürünüzde verimi en düşük ve size zarar ettiren hayvanları göstermektedir.
+      Doğumdan bu yana günlük canlı ağırlık artışının değeri, günlük yem maliyetinin altında kalan besi hayvanları.
+      Damızlık, gebe ve sağmal hayvanlar bu kritere göre değerlendirilmez.
     </p>
     ${_renderCullingList(cullingList)}
+    ${cullingList.insufficientData > 0 ? `
+      <p style="color:var(--text-muted); font-size:0.75rem; padding:0 var(--space-md);">
+        ℹ️ ${cullingList.insufficientData} hayvan değerlendirilemedi: doğum tarihi, doğum ağırlığı veya güncel tartım kaydı eksik.
+      </p>` : ''}
   `;
   return _container;
 }
@@ -30,18 +35,18 @@ function _renderCullingList(cullingList) {
       <div class="glass-card" style="margin:var(--space-md); padding:var(--space-xl) var(--space-md); text-align:center;">
         <div style="font-size:3rem; margin-bottom:12px;">🏆</div>
         <h3 style="color:var(--accent-green); margin-bottom:8px;">Harika Haber!</h3>
-        <p style="font-size:0.85rem; color:var(--text-secondary);">Sürünüzdeki tüm hayvanlar kârlı veya başa baş noktasında. Verimsizlik nedeniyle ayıklanması gereken hayvan bulunamadı.</p>
+        <p style="font-size:0.85rem; color:var(--text-secondary);">Değerlendirilebilen besi hayvanlarının hiçbiri yem maliyetinin altında büyümüyor.</p>
       </div>
     `;
   }
 
   const items = cullingList.map(c => {
-    const lossText = c.dailyLoss > 0 ? `-${c.dailyLoss.toFixed(2)} ₺ / gün` : 'Kârda';
+    const lossText = c.dailyLoss > 0 ? `-${c.dailyLoss.toFixed(2)} ₺ / gün` : 'Sağlık riski';
     return `
       <div class="culling-item">
         <div class="c-info">
           <span class="c-tag">${c.id} <small>(${c.type})</small></span>
-          <span class="c-reason">Sağlık Vaka: ${c.healthIssues} | Süt: ${c.milkYield}L</span>
+          <span class="c-reason">Artış: ${c.adgGrams} g/gün · Yem: ${c.feedCostPerDay.toFixed(2)} ₺/gün · Tedavi: ${c.treatmentCount}</span>
         </div>
         <div class="c-loss">${lossText}</div>
       </div>
