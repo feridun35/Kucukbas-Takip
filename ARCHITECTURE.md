@@ -124,6 +124,7 @@ Saf modüller state'e bağımlı değildir; hem her `setState`'te çalışan `he
 - `breedingStatus.js` — anaç bazında gebelik durumu, gebe hayvan listesi
 - `syncMerge.js` — üç yönlü kayıt bazında birleştirme
 - `observationRecords.js` — belirtiden hayvan durumu türetme, salgın şüphesi, ihbarı zorunlu belirti birlikteliği, uzun süre açık kalan belirtiler
+- `diagnosisEngine.js` — kural tabanlı ayırıcı tanı (36 hastalık), aciliyet, ayırt edici sorular
 - `performanceIndex.js` — kayıtlı verilerden damızlık skoru (büyüme, gebe kalma, batında yavru, yavru yaşatma, yavru büyümesi, hastalık direnci, ana-baba) ve beklenen yavru skoru
 - `sanitize.js` — HTML kaçışlama (`escapeHtml`), serbest metin temizleme (`stripTags`), küpe no karakter kuralı (`isValidTag`)
 - `dateUtils.js` — yerel saat dilimine göre takvim tarihi (`todayIso`, `addDaysIso`, `daysBetweenIso`). `toISOString()` UTC verdiği için gün hesabında kullanılmaz.
@@ -188,7 +189,7 @@ AppState
 ├── Oturum anahtarları (hiçbir yere yazılmaz)
 │   └── currentPage, currentUser, currentTenantKey
 ├── Cihaz-yerel anahtarlar (localStorage'a yazılır, buluta GİTMEZ, buluttan EZİLMEZ)
-│   └── activeAnimalId, userRole, sensors
+│   └── activeAnimalId, sensors
 ├── Çiftlik verisi (localStorage + bulut)
 │   ├── focusMode
 │   ├── animals[]            ← status = yalnızca klinik durum ('good'|'warning'|'danger'); weightHistory[] = tarihli tartımlar
@@ -222,7 +223,7 @@ Eski `vaccines[]` listesi kaldırıldı. Eski formatta gelen veri (localStorage,
 | `feedInventory/feedHistory` | `feedManager` (`addFeedStock`, `deductDailyHerdFeed`, `deductFeed`, `applyRation`) |
 | `mortalityRecords` | `herdManager.recordDeath` |
 | `sensors` | `sensors.js` (60 sn'de bir) |
-| `focusMode` / `userRole` / `activeAnimalId` / `currentPage` | `dashboard` / `profile` / `herd-list` + `herdManager` / `router` |
+| `focusMode` / `activeAnimalId` / `currentPage` | `dashboard` / `herd-list` + `herdManager` / `router` |
 
 ### 4.3 Çapraz (cross-module) veri akışları
 
@@ -439,8 +440,7 @@ Bildirimler `{ source, keys }` meta bilgisi taşır: `local`, `cloud`, `load`, `
 ### Bilinen sınırlamalar / henüz yapılmamış özellikler
 
 - **Hayvan satışı kaydı yok.** Hayvan profili ve ROI'deki "Hızlı Satış" yalnızca bilgi mesajı gösteriyor; hayvan sürüden çıkmıyor, satış geliri kaydedilmiyor.
-- **Henüz çalışmayan düğmeler.** "AI Bireysel Teşhis" (profil) ve "Pasaportu Paylaş" yalnızca bilgi mesajı gösteriyor. Yapay zeka teşhis sayfası kural tabanlı ve sonucu kaydedilmiyor; ayrıca ele alınacak.
-- **Rol yetkisi yok.** "Sahip / Çoban" seçimi yalnızca görünümü değiştiriyor; aynı hesapla herkes her işlemi yapabiliyor.
+- **Henüz çalışmayan düğme.** "Pasaportu Paylaş" yalnızca bilgi mesajı gösteriyor.
 - **Senkron yükü büyüyor.** Çiftlik verisi bulutta tek JSON satırı olarak tutuluyor ve her değişiklikte tamamı gönderiliyor. Örneğin 1500 hayvanda bu yaklaşık 0.5 MB eder. Yem geçmişi gibi listeler zamanla büyüdükçe bu boyut da artar.
 
 ## 8. Belirti Kaydı ve Sağlık Takibi
@@ -498,4 +498,28 @@ flowchart LR
 | Yavru yaşatma | Yavrunun ilk 90 günü; 90 günden küçük canlı yavrular henüz sayılmaz. |
 | Hastalık direnci | Son 12 ayda Orta/Ağır belirti + belirtiye bağlı olmayan bireysel tedavi. Aşı, antiparaziter, vitamin ve toplu uygulamalar sayılmaz. |
 | Süt | Süt verimi kaydı olmadığı için süt odağında annenin yavru büyütmesi ve yaşatması ağır basar. |
+
+## 10. Teşhis Asistanı (kural tabanlı ayırıcı tanı)
+
+Eski "Yapay Zeka Teşhis" sayfası 7 belirtiyle sabit metin döndürüyor, sonucu kaydetmiyordu; profildeki "AI Bireysel Teşhis" düğmesi yalnızca bilgi mesajı gösteriyordu. Yerine koyun ağırlıklı, 36 hastalıklık bir bilgi tabanıyla çalışan teşhis asistanı geldi.
+
+```mermaid
+flowchart LR
+  KB["data/disease-library.js<br/>36 hastalık · 55 bulgu"] --> EN
+  DM["diagnosisManager<br/>bağlam: yaş, cinsiyet, gebelik/doğum/laktasyon,<br/>sürüde benzer vaka, aşı, parazit ilacı"] --> EN["diagnosisEngine.diagnose<br/>(saf)"]
+  UI["#health-ai<br/>bulgu (var / yok / bilinmiyor) + ısı"] --> EN
+  EN --> R["Olasılık sıralı ayırıcı tanı<br/>aciliyet · ihbar · zoonoz · sorular"]
+  R -->|Kaydet| O[(healthObservations[].diagnoses)]
+  O --> P["Profil: belirti kartı ve sağlık geçmişinde 'Ön teşhis'"]
+```
+
+| Kural | Değer |
+|---|---|
+| Bulgu puanı | Hastalık için çok tipik 3, sık 2, görülebilir 1. "Yok" denen temel bulgu −2.5; hastalığın açıklayamadığı bulgu −0.9 (genel bulgularda −0.3). |
+| Bağlam | Isı (yüksek ateş / ateş / normal / düşük), yaş aralığı, cinsiyet, gebelik-doğum-laktasyon, mevsim, sürüde son 7 günde benzer belirtiler (bulaşıcılarda +1/+2), son 12 ay aşısı (−2.5), son 30 gün parazit ilacı (−1). |
+| Listeye girme | En az bir ayırt edici klinik bulgu; iştahsızlık/halsizlik tek başına yetmez. |
+| Olasılık | Puanlar göreli olasılığa çevrilir; sabit puanlı "listede olmayan başka neden" payı zayıf eşleşmede aşırı kesinliği önler. |
+| Aciliyet | Olası (≥ %15) hastalıkların en yükseği + kırmızı bayraklar (yatma, solunum güçlüğü, düşük ısı, ≥ 41.5 °C, mor meme, idrar yapamama, ölüde kanama). |
+| Sorular | Üst sıradaki hastalıkları en çok ayıran, cevaplanmamış bulgular ("Bilmiyorum" denenler tekrar sorulmaz). |
+| Kayıt | Açık belirti kaydına `diagnoses[]` olarak eklenir; açık kayıt yoksa bulgulardan yeni belirti kaydı açılır (hayvan durumu yeniden hesaplanır). |
 

@@ -9,7 +9,7 @@ import { navigateTo } from '../core/router.js';
 import { calculateBirthDate, confirmPregnancy, markMatingFailed } from '../core/breedingManager.js';
 import { getOpenDamMap, getDamStatus, isOpenDamStatus } from '../core/breedingStatus.js';
 import { calculateAnimalROI } from '../core/financeEngine.js';
-import { getTasksForUser, getTaskHistory, addTask, completeTask, TASK_TYPES } from '../core/workforceManager.js';
+import { getTasks, getTaskHistory, addTask, completeTask, TASK_TYPES } from '../core/workforceManager.js';
 import { getAnimalWithdrawalStatus } from '../core/healthManager.js';
 import { isVaccineRecord, recordTargetsAnimal } from '../core/healthRecords.js';
 import { updateAnimal, registerBirth, recordDeath, estimateLossFromWeight, getWeightRange, isWeightPlausible } from '../core/herdManager.js';
@@ -20,6 +20,7 @@ import { symptomLabel, severityLabel, effectiveSeverityRank } from '../core/obse
 import { escapeHtml } from '../core/sanitize.js';
 import { computePerformanceIndexes, getWeighings, CONFIDENCE_LABELS } from '../core/performanceIndex.js';
 import { openObservationModal } from './observation-modal.js';
+import { setDiagnosisTarget, latestDiagnosis } from '../core/diagnosisManager.js';
 import { openTreatmentModal } from './treatment-modal.js';
 import { openBreedingModal } from './breeding-modal.js';
 
@@ -697,7 +698,7 @@ function _renderHealthTab(animal) {
         <span class="btn-icon">🤒</span> Hastalık / Belirti Kaydet
       </button>
       <button class="huge-btn btn-secondary" id="btn-ind-ai" style="width:100%; border-radius:24px; padding:16px; background:var(--glass-bg); border:1px dashed var(--accent-cyan);">
-        <span class="btn-icon">🤖</span> AI Bireysel Teşhis
+        <span class="btn-icon">🩺</span> Teşhis Asistanı
       </button>
 
       ${animal.rawGender === 'Dişi' ? `
@@ -766,7 +767,21 @@ function _initHealthTab() {
   });
 
   const btnAi = _container.querySelector('#btn-ind-ai');
-  if (btnAi) btnAi.addEventListener('click', () => showAlert('Yapay Zeka Teşhisi', '[SIM] Yapay zeka ile bireysel semptom izleme paneli', '🤖'));
+  if (btnAi) btnAi.addEventListener('click', () => {
+    const animal = _getActiveAnimal();
+    if (!animal) return;
+    setDiagnosisTarget(animal.id);
+    navigateTo('health-ai');
+  });
+
+  _container.querySelectorAll('.btn-obs-diagnose').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const animal = _getActiveAnimal();
+      if (!animal) return;
+      setDiagnosisTarget(animal.id, btn.dataset.obsId);
+      navigateTo('health-ai');
+    });
+  });
 
   // Doğum bildirimi (sadece dişilerde)
   const btnBirth = _container.querySelector('#btn-report-birth');
@@ -980,7 +995,7 @@ function _initFinanceTab() {
 // Tab: TASKS (Bireysel Görevler)
 // ═══════════════════════════════════════
 function _renderTasksTab(animal) {
-  const activeTasks = getTasksForUser('owner', 'individual', animal.tagID);
+  const activeTasks = getTasks('individual', animal.tagID);
   const history = getTaskHistory('individual', animal.tagID);
 
   const activeHtml = activeTasks.length === 0 
@@ -1208,10 +1223,23 @@ function _renderOpenObservationCard(o) {
       ${o.note ? `<div style="font-size:0.75rem; color:var(--text-muted); margin-top:4px; font-style:italic;">📝 ${escapeHtml(o.note)}</div>` : ''}
       <div style="display:flex; gap:8px; margin-top:10px;">
         <button class="btn-obs-resolve" data-obs-id="${escapeHtml(o.id)}" style="flex:1; padding:8px; border-radius:10px; border:none; background:var(--accent-green); color:#fff; font-weight:700; font-size:0.78rem; cursor:pointer;">✅ İyileşti</button>
-        <button class="btn-obs-treat" data-obs-id="${escapeHtml(o.id)}" style="flex:1; padding:8px; border-radius:10px; border:1px solid rgba(239,68,68,0.4); background:rgba(239,68,68,0.12); color:var(--danger-red); font-weight:700; font-size:0.78rem; cursor:pointer;">💉 Tedavi Uygula</button>
+        <button class="btn-obs-treat" data-obs-id="${escapeHtml(o.id)}" style="flex:1; padding:8px; border-radius:10px; border:1px solid rgba(239,68,68,0.4); background:rgba(239,68,68,0.12); color:var(--danger-red); font-weight:700; font-size:0.78rem; cursor:pointer;">💉 Tedavi</button>
+        <button class="btn-obs-diagnose" data-obs-id="${escapeHtml(o.id)}" style="flex:1; padding:8px; border-radius:10px; border:1px solid rgba(6,182,212,0.4); background:rgba(6,182,212,0.12); color:var(--accent-cyan); font-weight:700; font-size:0.78rem; cursor:pointer;">🩺 Teşhis</button>
       </div>
+      ${_renderDiagnosisLine(o)}
     </div>
   `;
+}
+
+/** Belirti kaydına bağlı son teşhis değerlendirmesi */
+function _renderDiagnosisLine(o) {
+  const dx = latestDiagnosis(o);
+  if (!dx || !dx.results?.length) return '';
+  const [first, ...rest] = dx.results;
+  return `
+    <div style="font-size:0.72rem; color:var(--accent-cyan); margin-top:8px; padding-top:6px; border-top:1px dashed rgba(6,182,212,0.3);">
+      🩺 Ön teşhis (${escapeHtml(dx.date)}): <strong>${escapeHtml(first.name)}</strong> %${Math.round(first.probability * 100)}${rest.length ? ` <span style="color:var(--text-muted);">· ayırıcı: ${escapeHtml(rest.map(r => r.name).join(', '))}</span>` : ''}
+    </div>`;
 }
 
 function _renderObservationHistoryItem(o) {
@@ -1236,6 +1264,7 @@ function _renderObservationHistoryItem(o) {
         </div>
       </div>
       ${o.note ? `<div style="font-size:0.7rem; color:var(--text-muted); margin-top:4px; font-style:italic;">📝 Not: ${escapeHtml(o.note)}</div>` : ''}
+      ${_renderDiagnosisLine(o)}
     </div>
   `;
 }

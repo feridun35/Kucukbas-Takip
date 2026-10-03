@@ -22,7 +22,9 @@ import { pushLocalStateToCloud, syncOnLoad, setCloudLoadDone, setSyncStatus, SYN
 // Hiçbir yere yazılmayan oturum anahtarları
 const SESSION_KEYS = ['currentPage', 'currentUser', 'currentTenantKey'];
 // Yalnızca bu cihazın localStorage'ında tutulan, buluta gönderilmeyen ve buluttan ezilmeyen anahtarlar
-const DEVICE_LOCAL_KEYS = ['activeAnimalId', 'userRole', 'sensors'];
+const DEVICE_LOCAL_KEYS = ['activeAnimalId', 'sensors'];
+// Kaldırılan özelliklerden kalan, artık yüklenmeyen anahtarlar (örn. eski rol seçimi)
+const REMOVED_KEYS = ['userRole'];
 // Her setState'te yeniden hesaplanan türetilmiş özetler (buluta gönderilmez)
 const DERIVED_KEYS = ['herdSummary', 'healthSummary', 'financeSummary'];
 
@@ -40,7 +42,6 @@ const EMPTY_STATE_TEMPLATE = {
   schemaVersion: CURRENT_SCHEMA_VERSION,
   currentPage: 'dashboard',
   focusMode: 'meat',
-  userRole: 'owner',
   activeAnimalId: null,
   currentUser: null,
   currentTenantKey: null,
@@ -212,7 +213,6 @@ export function getInitialDemoState() {
   // Demo tohumu eski (v1) formatta yazılmıştır; göç katmanından geçirilerek güncel şemaya yükseltilir.
   return migrateTenantData({
     focusMode: 'meat',
-    userRole: 'owner',
     activeAnimalId: 'TR-102',
     sensors: JSON.parse(JSON.stringify(mockSensorData)),
     herdSummary: JSON.parse(JSON.stringify(mockHerdData)),
@@ -395,7 +395,6 @@ export function getInitialBlankState(user) {
   return {
     schemaVersion: CURRENT_SCHEMA_VERSION,
     focusMode: 'meat',
-    userRole: user?.role || 'owner',
     activeAnimalId: null,
     sensors: {
       connected: false,
@@ -448,7 +447,6 @@ export function loadTenantState(user) {
 
   AppState.currentUser = user;
   AppState.currentTenantKey = user.storageKey;
-  AppState.userRole = user.role || 'owner';
 
   try {
     const rawData = localStorage.getItem(user.storageKey);
@@ -456,7 +454,7 @@ export function loadTenantState(user) {
       // Daha önce kaydedilmiş yerel veri varsa güncel şemaya yükseltip yükle
       const parsed = migrateTenantData(JSON.parse(rawData));
       Object.keys(parsed).forEach(k => {
-        if (!SESSION_KEYS.includes(k)) AppState[k] = parsed[k];
+        if (!SESSION_KEYS.includes(k) && !REMOVED_KEYS.includes(k)) AppState[k] = parsed[k];
       });
     } else {
       // Kaydedilmiş veri yoksa hesap türüne göre ilk veriyi ata
@@ -496,7 +494,7 @@ export function applyCloudState(cloudPayload) {
   const appliedKeys = [];
 
   Object.keys(migrated).forEach(k => {
-    if (SESSION_KEYS.includes(k) || DEVICE_LOCAL_KEYS.includes(k) || DERIVED_KEYS.includes(k)) return;
+    if (SESSION_KEYS.includes(k) || DEVICE_LOCAL_KEYS.includes(k) || DERIVED_KEYS.includes(k) || REMOVED_KEYS.includes(k)) return;
     AppState[k] = migrated[k];
     appliedKeys.push(k);
   });
@@ -529,7 +527,7 @@ export function importFarmData(payload) {
   const merged = mergeFarmPayloads(null, getCloudPayload(), migrateTenantData(payload));
   const update = {};
   Object.keys(merged).forEach(k => {
-    if (SESSION_KEYS.includes(k) || DEVICE_LOCAL_KEYS.includes(k) || DERIVED_KEYS.includes(k)) return;
+    if (SESSION_KEYS.includes(k) || DEVICE_LOCAL_KEYS.includes(k) || DERIVED_KEYS.includes(k) || REMOVED_KEYS.includes(k)) return;
     update[k] = merged[k];
   });
   setState(update);
@@ -545,7 +543,6 @@ export function initNewTenantState(user) {
   _resetMemoryState();
   AppState.currentUser = user;
   AppState.currentTenantKey = user.storageKey;
-  AppState.userRole = user.role || 'owner';
 
   const blankState = getInitialBlankState(user);
   Object.keys(blankState).forEach(k => {
@@ -658,7 +655,7 @@ function _applyOtherTabState(payload) {
   const data = migrateTenantData(payload);
   const keys = [];
   Object.keys(data).forEach(k => {
-    if (SESSION_KEYS.includes(k) || DEVICE_LOCAL_KEYS.includes(k)) return;
+    if (SESSION_KEYS.includes(k) || DEVICE_LOCAL_KEYS.includes(k) || REMOVED_KEYS.includes(k)) return;
     AppState[k] = data[k];
     keys.push(k);
   });
