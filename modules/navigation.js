@@ -3,7 +3,8 @@
  */
 
 import { navigateTo } from '../core/router.js';
-import { onSyncStatusChange } from '../core/syncManager.js';
+import { onSyncStatusChange, getSyncStatusInfo, retrySync } from '../core/syncManager.js';
+import { showAlert, showConfirm } from '../core/modal.js';
 
 const navItems = [
   {
@@ -87,12 +88,17 @@ export function renderNavBar() {
     const badge = document.getElementById('sync-badge');
     if (badge) {
       badge.className = `sync-badge status-${statusInfo.status}`;
+      badge.style.cursor = statusInfo.status === 'error' ? 'pointer' : '';
+      badge.title = statusInfo.error ? `${statusInfo.error.message} (ayrıntı için dokunun)` : 'Senkronizasyon Durumu';
       badge.innerHTML = `
         <span class="sync-dot">${statusInfo.icon}</span>
         <span class="sync-text">${statusInfo.text}</span>
       `;
     }
   });
+
+  // Hata rozetine dokununca nedeni göster ve yeniden denemeyi öner
+  document.getElementById('sync-badge')?.addEventListener('click', _showSyncDetails);
 
   // Event delegation
   nav.addEventListener('click', (e) => {
@@ -102,3 +108,18 @@ export function renderNavBar() {
     }
   });
 }
+
+async function _showSyncDetails() {
+  const info = getSyncStatusInfo();
+  if (info.status !== 'error') {
+    await showAlert('Bulut Eşitleme', `Durum: ${info.text}`, info.icon);
+    return;
+  }
+  const err = info.error;
+  const when = err?.at ? new Date(err.at).toLocaleTimeString('tr-TR') : '';
+  const message = err
+    ? `${err.message}\n\nAşama: ${err.stage}${when ? ` (${when})` : ''}\nTeknik ayrıntı: ${err.technical}\n\nVerileriniz bu cihazda güvende; eşitleme düzelince buluta gönderilir. Şimdi tekrar denensin mi?`
+    : 'Eşitleme başarısız oldu. Şimdi tekrar denensin mi?';
+  if (await showConfirm('Eşitleme Hatası', message, '🔴')) await retrySync();
+}
+

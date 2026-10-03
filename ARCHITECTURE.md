@@ -329,6 +329,8 @@ sequenceDiagram
 
 Bildirimler `{ source, keys }` meta bilgisi taşır: `local`, `cloud`, `load`, `sensors`, `reset`. Router yalnızca `cloud` kaynağında açık sayfayı yeniden çizer (scroll konumu korunur); yerel işlemlerde sayfalar kendi yeniden çizimlerini yapar. Kendi yaptığımız push'un `updated_at` değeri sunucudan okunur, böylece kendi yazdığımız veri "başka cihazdan güncelleme" sanılmaz; gönderilmeyi bekleyen yerel değişiklik varken bulut verisi uygulanmaz.
 
+**Eşitleme hataları:** Her hata nedeniyle kaydedilir (`getLastSyncError`). Alt menüdeki "Eşitleme Hatası" rozetine dokununca neden, aşama ve teknik ayrıntı gösterilir ve yeniden deneme önerilir (`retrySync`). Tanınan nedenler: oturum yok/süresi dolmuş (önce `refreshSession` denenir), sahipsiz satır (`23505` olup satır okunamıyorsa — RLS gizliyor; `schema.sql` 2b onarır), RLS reddi, tablo yok, ağ hatası, art arda çakışma.
+
 ### 5.3 Kimlik doğrulama ve bulut güvenlik modeli
 
 | Katman | Davranış |

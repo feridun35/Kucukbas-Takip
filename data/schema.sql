@@ -70,6 +70,16 @@ on conflict (email) do nothing;
 delete from public.farms_data
 where tenant_key in ('shepherd_global_users_registry', 'shepherd_data_demo');
 
+-- ── 2b. Sahipsiz kayıt onarımı ──
+-- owner_id sütunu eklenmeden önce oluşmuş 'shepherd_data_<kullanıcı id>' satırlarının sahibi boş kalır;
+-- RLS bu satırları sahibinden de gizler ve uygulama "Eşitleme Hatası" verir. Kiracı anahtarı kullanıcı
+-- kimliğini zaten içerdiği için sahibi güvenle atanabilir.
+update public.farms_data f
+set owner_id = u.id
+from auth.users u
+where f.owner_id is null
+  and f.tenant_key = 'shepherd_data_' || u.id::text;
+
 -- ── 3. Row Level Security: yalnızca sahibine erişim ──
 alter table public.farms_data enable row level security;
 
@@ -174,3 +184,6 @@ $$;
 
 revoke all on function public.claim_legacy_farm(text) from public, anon;
 grant execute on function public.claim_legacy_farm(text) to authenticated;
+
+-- PostgREST şema önbelleğini yenile (yeni sütunlar API'de hemen görünsün)
+notify pgrst, 'reload schema';
