@@ -3,6 +3,7 @@
  * State-driven: tüm görevler state.tasks ve state.taskHistory üzerinden yönetilir.
  */
 
+import { stripTags } from './sanitize.js';
 import { todayIso, addDaysIso, normalizeDateInput } from './dateUtils.js';
 import { getState, readState, setState } from './state.js';
 import { buildRecordFromCompletedTask, markCourseDoseCompleted, computeStockDeduction } from './healthManager.js';
@@ -153,8 +154,8 @@ export function buildTask(taskData) {
   return {
     ...links,
     id: `TSK-${Date.now()}-${_taskSeq}`,
-    title: taskData.title,
-    desc: taskData.desc || '',
+    title: stripTags(taskData.title || ''),
+    desc: stripTags(taskData.desc || ''),
     type: taskData.type || 'other',
     prio: taskData.prio || 'Normal',
     scope: taskData.scope || 'herd',

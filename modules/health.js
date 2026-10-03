@@ -3,13 +3,15 @@
  */
 
 import { navigateTo } from '../core/router.js';
+import { getOpenObservations } from '../core/observationManager.js';
 
 let _container = null;
 
 export function render() {
   _container = document.createElement('div');
   _container.className = 'page-enter health-hub-page';
-  _container.style.paddingBottom = '110px'; 
+  _container.style.paddingBottom = '110px';
+  const openCount = getOpenObservations().length;
 
   _container.innerHTML = `
     <div class="section-title" style="margin-top:var(--space-md);"><span class="dot" style="background:var(--accent-blue)"></span>Sağlık & Veteriner Merkezi</div>
@@ -47,6 +49,12 @@ export function render() {
         <p style="font-size:0.7rem; color:var(--text-muted);">Mortalite & kayıp analizleri</p>
       </div>
 
+      <!-- Box: Belirti Takibi -->
+      <div id="btn-goto-observations" class="glass-card hub-box" style="display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:var(--space-lg) var(--space-md); cursor:pointer; min-height:140px; border-color:rgba(245, 158, 11, 0.35); transition:all 0.2s; grid-column: span 2;">
+        <span style="font-size:2.5rem; margin-bottom:12px;">🤒</span>
+        <h4 style="font-size:0.95rem; color:var(--text-primary); margin-bottom:4px;">Belirti Takibi${openCount ? ` <span style="font-size:0.75rem; background:rgba(245,158,11,0.2); color:#fbbf24; padding:2px 8px; border-radius:10px;">${openCount} açık</span>` : ''}</h4>
+        <p style="font-size:0.7rem; color:var(--text-muted);">Hasta hayvanlar, açık belirtiler ve salgın uyarıları</p>
+      </div>
       <!-- Box 5: Ecza Deposu -->
       <div id="btn-goto-pharmacy" class="glass-card hub-box" style="display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:var(--space-lg) var(--space-md); cursor:pointer; min-height:140px; border-color:rgba(6, 182, 212, 0.3); transition:all 0.2s; grid-column: span 2;">
         <span style="font-size:2.5rem; margin-bottom:12px;">🏥</span>
@@ -75,6 +83,8 @@ export function init() {
   const btnMortality = _container.querySelector('#btn-goto-mortality');
   if (btnMortality) btnMortality.addEventListener('click', () => navigateTo('health-mortality'));
 
+  const btnObs = _container.querySelector('#btn-goto-observations');
+  if (btnObs) btnObs.addEventListener('click', () => navigateTo('health-observations'));
   const btnPharmacy = _container.querySelector('#btn-goto-pharmacy');
   if (btnPharmacy) btnPharmacy.addEventListener('click', () => navigateTo('health-meds'));
 }

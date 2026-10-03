@@ -10,7 +10,6 @@ import {
   mockHealthData,
   mockFinanceData,
   mockSensorData,
-  mockAlerts,
   animalsArray,
   mockTasks
 } from '../data/mock-data.js';
@@ -101,7 +100,8 @@ const EMPTY_STATE_TEMPLATE = {
   pharmacyStock: [],
   treatmentRecords: [],
   customMedications: [],
-  breedingRecords: []
+  breedingRecords: [],
+  healthObservations: []
 };
 
 // Bellekteki aktif state nesnesi
@@ -191,7 +191,7 @@ export function getInitialDemoState() {
     herdSummary: JSON.parse(JSON.stringify(mockHerdData)),
     healthSummary: JSON.parse(JSON.stringify(mockHealthData)),
     financeSummary: JSON.parse(JSON.stringify(mockFinanceData)),
-    alerts: JSON.parse(JSON.stringify(mockAlerts)),
+    alerts: [], // Bildirimler kayıtlı veriden üretilir (core/alertsEngine.js)
     animals: JSON.parse(JSON.stringify(animalsArray)),
     tasks: JSON.parse(JSON.stringify(mockTasks)),
     taskHistory: [
@@ -267,6 +267,18 @@ export function getInitialDemoState() {
       }
     ],
     customMedications: [],
+    healthObservations: [
+      {
+        id: 'OBS-DEMO-001', animalId: 'TR-088', date: addDaysIso(todayIso(), -2),
+        symptoms: ['cough', 'nasal_discharge'], note: 'Sabah yemliğe gelmedi, burnunda sarı akıntı.',
+        temperature: 40.2, severity: 'moderate', status: 'open', resolvedDate: null, treatmentIds: [], createdAt: addDaysIso(todayIso(), -2)
+      },
+      {
+        id: 'OBS-DEMO-002', animalId: 'TR-099', date: addDaysIso(todayIso(), -1),
+        symptoms: ['anorexia', 'lethargy'], note: 'Kondisyon düşük, ayağa kalkmakta zorlanıyor.',
+        temperature: 41.1, severity: 'severe', status: 'open', resolvedDate: null, treatmentIds: [], createdAt: addDaysIso(todayIso(), -1)
+      }
+    ],
     breedingRecords: [
       {
         id: 'BR-DEMO-001',
@@ -341,7 +353,8 @@ export function getInitialBlankState(user) {
     pharmacyStock: [],
     treatmentRecords: [],
     customMedications: [],
-    breedingRecords: []
+    breedingRecords: [],
+    healthObservations: []
   };
 }
 
@@ -563,6 +576,44 @@ function _flushPersist() {
 function _notifySubscribers(meta = { source: STATE_SOURCES.LOCAL, keys: [] }) {
   _subscribers.forEach(cb => {
     try { cb(meta); } catch (e) { console.error('[State] Subscriber error:', e); }
+  });
+}
+
+// ── Aynı tarayıcıda birden fazla sekme ──
+// Her sekmenin kendi bellek kopyası vardır. Bir sekme kaydettiğinde diğerleri `storage` olayıyla güncel veriyi alır;
+// aksi halde eski kopyasıyla yapacağı ilk değişiklik diğer sekmenin değişikliğini ezerdi.
+const CURRENT_USER_STORAGE_KEY = 'shepherd_current_user';
+
+function _applyOtherTabState(payload) {
+  const data = migrateTenantData(payload);
+  const keys = [];
+  Object.keys(data).forEach(k => {
+    if (SESSION_KEYS.includes(k) || DEVICE_LOCAL_KEYS.includes(k)) return;
+    AppState[k] = data[k];
+    keys.push(k);
+  });
+  if (AppState.activeAnimalId && !(AppState.animals || []).some(a => a.id === AppState.activeAnimalId)) {
+    AppState.activeAnimalId = null;
+  }
+  syncHerdMathState(AppState);
+  // Açık sayfa yeniden çizilir (router 'cloud' kaynağını dinliyor)
+  _notifySubscribers({ source: STATE_SOURCES.CLOUD, keys });
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('storage', (e) => {
+    if (e.storageArea !== localStorage) return;
+    // Başka sekmede çıkış/giriş yapıldı → bu sekme de aynı oturuma geçsin
+    if (e.key === CURRENT_USER_STORAGE_KEY) {
+      window.location.reload();
+      return;
+    }
+    if (!e.key || e.key !== AppState.currentTenantKey || !e.newValue) return;
+    try {
+      _applyOtherTabState(JSON.parse(e.newValue));
+    } catch (err) {
+      console.error('[State] Diğer sekmeden gelen veri uygulanamadı:', err);
+    }
   });
 }
 

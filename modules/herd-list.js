@@ -40,10 +40,10 @@ function _renderContent() {
   let filtered = animals.filter(a => {
     // Search
     if (_searchTerm) {
-      const term = _searchTerm.toLowerCase();
-      const matchId = a.id && a.id.toLowerCase().includes(term);
-      const matchRfid = a.rfid && a.rfid.toLowerCase().includes(term);
-      const matchNickname = a.nickname && a.nickname.toLowerCase().includes(term);
+      const term = _searchTerm.toLocaleLowerCase('tr-TR');
+      const matchId = a.id && a.id.toLocaleLowerCase('tr-TR').includes(term);
+      const matchRfid = a.rfid && a.rfid.toLocaleLowerCase('tr-TR').includes(term);
+      const matchNickname = a.nickname && a.nickname.toLocaleLowerCase('tr-TR').includes(term);
       if (!matchId && !matchRfid && !matchNickname) {
         return false;
       }

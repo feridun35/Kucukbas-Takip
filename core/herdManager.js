@@ -7,6 +7,7 @@
  * bu fonksiyonları çağırır. Kayıt oluşturma, sürüden çıkarma, çapraz modül yazımları burada yapılır.
  */
 
+import { stripTags, isValidTag, TAG_RULE_MESSAGE } from './sanitize.js';
 import { todayIso, toLocalIso, normalizeDateInput } from './dateUtils.js';
 import { getState, setState } from './state.js';
 import { applyBirthToRecords, closeDamInRecords, pruneBreedingTasks, normalizeParentId } from './breedingManager.js';
@@ -102,6 +103,7 @@ export function estimateLossFromWeight(weightKg) {
 export function addAnimal(input) {
   const id = String(input?.id || '').trim();
   if (!id) return { success: false, message: 'Küpe numarası zorunludur.' };
+  if (!isValidTag(id)) return { success: false, message: TAG_RULE_MESSAGE };
 
   const state = getState();
   if (isTagInUse(id, state.animals)) {
@@ -131,7 +133,7 @@ export function addAnimal(input) {
 
   const animal = {
     id,
-    nickname: input.nickname ? String(input.nickname).trim() : '',
+    nickname: input.nickname ? stripTags(String(input.nickname)) : '',
     rfid: _generateRfid(),
     breed,
     gender,
@@ -205,6 +207,8 @@ export function recordDeath(input) {
   const animals = [...(state.animals || [])];
   const idx = animals.findIndex(a => a.id === tag);
   const animal = idx > -1 ? animals[idx] : null;
+  // Sürüde olmayan (elle girilen) küpe numarası da güvenli karakterlerden oluşmalı
+  if (!animal && !isValidTag(tag)) return { success: false, message: TAG_RULE_MESSAGE };
 
   const deathDate = input.deathDate || todayIso();
   const reason = input.reason || 'Diğer / Bilinmeyen';
@@ -226,7 +230,7 @@ export function recordDeath(input) {
     deathDate,
     deathReason: reason,
     financialLoss,
-    note: input.note || ''
+    note: stripTags(input.note || '')
   };
 
   if (idx > -1) animals.splice(idx, 1);
@@ -288,6 +292,7 @@ export function registerBirth(motherId, input) {
 
   const babyId = String(input?.babyId || '').trim();
   if (!babyId) return { success: false, message: 'Yavru küpe numarası zorunludur.' };
+  if (!isValidTag(babyId)) return { success: false, message: TAG_RULE_MESSAGE };
   if (isTagInUse(babyId, animals)) {
     return { success: false, message: `${babyId} küpe numarası sürüde zaten kayıtlı.` };
   }

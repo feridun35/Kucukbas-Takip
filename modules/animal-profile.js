@@ -14,12 +14,22 @@ import { getAnimalWithdrawalStatus } from '../core/healthManager.js';
 import { isVaccineRecord, recordTargetsAnimal } from '../core/healthRecords.js';
 import { updateAnimal, registerBirth, recordDeath, estimateLossFromWeight, getWeightRange, isWeightPlausible } from '../core/herdManager.js';
 import { DEATH_REASONS } from '../data/herd-constants.js';
+import { OBSERVATION_RULES } from '../data/symptom-catalog.js';
+import { getObservationsForAnimal, resolveObservation, linkTreatmentToObservation } from '../core/observationManager.js';
+import { symptomLabel, severityLabel, effectiveSeverityRank } from '../core/observationRecords.js';
+import { escapeHtml } from '../core/sanitize.js';
+import { openObservationModal } from './observation-modal.js';
 import { openTreatmentModal } from './treatment-modal.js';
 import { openBreedingModal } from './breeding-modal.js';
 
 let _container = null;
 let _activeTab = 'info'; // 'info', 'passport', 'breeding', 'health', 'finance', 'tasks'
 let _breedingViewMode = 'mating';
+
+/** Profil bir sonraki açılışta belirtilen sekmeyle açılır (örn. belirti listesinden 'health') */
+export function setProfileTab(tab) {
+  _activeTab = tab;
+}
 
 export function render() {
   _container = document.createElement('div');
@@ -604,14 +614,20 @@ function _renderHealthTab(animal) {
     </div>
   `;
 
-  // Medikal geçmiş (treatmentRecords'tan)
+  // Sağlık geçmişi: belirtiler + tedaviler + aşılar (tek zaman çizelgesi)
   const medHistoryHtml = _renderMedicalHistory(animal.tagID);
+  const openObs = getObservationsForAnimal(animal.tagID).filter(o => o.status === 'open');
 
   return `
+    ${openObs.length > 0 ? `
+      <div class="section-title"><span class="dot" style="background:var(--warning-orange)"></span>Açık Belirtiler (${openObs.length})</div>
+      ${openObs.map(_renderOpenObservationCard).join('')}
+    ` : ''}
+
     <div class="section-title"><span class="dot" style="background:var(--danger-red)"></span>Bireysel Arınma Durumu</div>
     ${withdrawalCardHtml}
 
-    <div class="section-title"><span class="dot" style="background:#a855f7"></span>Medikal Geçmiş & Aşı / Tedavi Kayıtları</div>
+    <div class="section-title"><span class="dot" style="background:#a855f7"></span>Sağlık Geçmişi (Belirti, Tedavi, Aşı)</div>
     <div class="glass-card" style="margin-bottom:var(--space-lg); padding:var(--space-sm);">
       ${medHistoryHtml}
     </div>
@@ -656,8 +672,41 @@ function _initHealthTab() {
     });
   }
 
+  // Belirti kaydı
   const btnDisease = _container.querySelector('#btn-ind-disease');
-  if (btnDisease) btnDisease.addEventListener('click', () => showAlert('Hastalık Kaydı', '[SIM] Bu hayvanda görülen belirti veya koyulan teşhisi kaydet.', '🤒'));
+  if (btnDisease) {
+    btnDisease.addEventListener('click', async () => {
+      const animal = _getActiveAnimal();
+      if (!animal) return;
+      const res = await openObservationModal(animal.id);
+      if (!res.saved) return;
+      const statusText = { good: 'Sağlıklı', warning: 'Riskli', danger: 'Hasta' }[res.status] || res.status;
+      await showAlert('Belirti Kaydedildi', `${animal.id} için belirti kaydedildi.\nHayvanın durumu: ${statusText}.\n\n${res.observation.date} tarihinden ${OBSERVATION_RULES.followUpDays} gün sonrasına kontrol görevi eklendi.`, '🤒');
+      _rerender();
+    });
+  }
+
+  // Açık belirti: iyileşti
+  _container.querySelectorAll('.btn-obs-resolve').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const ok = await showConfirm('İyileşti', 'Bu belirti kaydı "iyileşti" olarak kapatılsın mı?\n\nBaşka açık belirti yoksa hayvan tekrar "Sağlıklı" olur ve bekleyen kontrol görevi kaldırılır.', '✅');
+      if (!ok) return;
+      const res = resolveObservation(btn.dataset.obsId);
+      if (!res.success) await showAlert('Kapatılamadı', res.message, '⚠️');
+      _rerender();
+    });
+  });
+
+  // Açık belirti: tedavi uygula (tedavi belirtiye bağlanır)
+  _container.querySelectorAll('.btn-obs-treat').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const animal = _getActiveAnimal();
+      if (!animal) return;
+      const result = await openTreatmentModal(animal.id);
+      if (result.applied && result.recordId) linkTreatmentToObservation(btn.dataset.obsId, result.recordId);
+      if (result.applied) _rerender();
+    });
+  });
 
   const btnAi = _container.querySelector('#btn-ind-ai');
   if (btnAi) btnAi.addEventListener('click', () => showAlert('Yapay Zeka Teşhisi', '[SIM] Yapay zeka ile bireysel semptom izleme paneli', '🤖'));
@@ -1011,8 +1060,8 @@ function _rerender() {
 // ── Helpers ──
 
 function _getMedCategoryIcon(category, name) {
-  const cat = (category || '').toLowerCase();
-  const n = (name || '').toLowerCase();
+  const cat = (category || '').toLocaleLowerCase('tr-TR');
+  const n = (name || '').toLocaleLowerCase('tr-TR');
   if (cat.includes('aşı') || n.includes('aşı') || n.includes('karma') || n.includes('vaccine')) {
     return '💉';
   }
@@ -1036,8 +1085,8 @@ function _renderMedicalHistory(animalId) {
   const ws = getAnimalWithdrawalStatus(animalId);
   const activeIds = new Set(ws.records.map(r => r.id));
 
-  // Tek kaynak: treatmentRecords (aşılar dahil)
-  const combined = (state.treatmentRecords || [])
+  // Tedavi ve aşı kayıtları (treatmentRecords)
+  const records = (state.treatmentRecords || [])
     .filter(r => recordTargetsAnimal(r, animalId))
     .map(r => {
       // Net bireysel dozaj
@@ -1061,47 +1110,107 @@ function _renderMedicalHistory(animalId) {
         notes: r.notes
       };
     })
-    .sort((a, b) => new Date(b.date) - new Date(a.date));
+    .map(r => ({ ...r, kind: 'record' }));
+
+  // Belirti kayıtları da aynı zaman çizelgesinde
+  const observations = getObservationsForAnimal(animalId).map(o => ({ ...o, kind: 'observation' }));
+  const combined = [...records, ...observations]
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)));
 
   if (combined.length === 0) {
     return `
       <div style="text-align:center; padding:24px 12px;">
         <span style="font-size:2.2rem;">📋</span>
-        <p style="font-size:0.85rem; font-weight:600; color:var(--text-secondary); margin-top:8px;">Henüz Aşı veya Tedavi Kaydı Bulunmuyor</p>
-        <p style="font-size:0.75rem; color:var(--text-muted); margin-top:2px;">Bu hayvana uygulanan tüm aşı, ilaç ve vitaminler burada görüntülenecektir.</p>
+        <p style="font-size:0.85rem; font-weight:600; color:var(--text-secondary); margin-top:8px;">Henüz Sağlık Kaydı Bulunmuyor</p>
+        <p style="font-size:0.75rem; color:var(--text-muted); margin-top:2px;">Bu hayvanda görülen belirtiler ve uygulanan aşı, ilaç ve vitaminler burada görüntülenecektir.</p>
       </div>
     `;
   }
 
-  return combined.slice(0, 15).map(r => {
-    const icon = _getMedCategoryIcon(r.category, r.name);
-    const borderColor = r.isActive ? 'var(--danger-red)' : (r.type === 'vaccine' ? 'var(--accent-cyan)' : 'var(--accent-green)');
-    const categoryBadgeStyle = r.type === 'vaccine' ? 'background:rgba(6,182,212,0.15); color:#22d3ee;' : 'background:rgba(34,197,94,0.15); color:#4ade80;';
+  return combined.slice(0, 20).map(r => r.kind === 'observation' ? _renderObservationHistoryItem(r) : _renderRecordHistoryItem(r)).join('');
+}
 
-    return `
-      <div class="med-history-item" style="padding:12px 14px; border-left:4px solid ${borderColor}; margin-bottom:10px; background:rgba(15,23,42,0.5); border-radius:0 12px 12px 0; border-top:1px solid rgba(255,255,255,0.05); border-right:1px solid rgba(255,255,255,0.05); border-bottom:1px solid rgba(255,255,255,0.05);">
-        <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
-          <div style="flex:1; min-width:0;">
-            <div style="font-weight:700; font-size:0.9rem; color:var(--text-primary); display:flex; align-items:center; gap:6px;">
-              <span>${icon}</span>
-              <span>${r.name}</span>
-              <span style="font-size:0.65rem; padding:2px 8px; border-radius:10px; font-weight:600; ${categoryBadgeStyle}">${r.category || 'Tedavi'}</span>
-            </div>
-            <div style="font-size:0.75rem; color:var(--text-secondary); margin-top:4px; font-weight:500;">
-              ${r.activeIngredient ? `<strong>${r.activeIngredient}</strong> • ` : ''}<span style="color:var(--accent-cyan); font-weight:700;">${r.dosageStr}</span>
-            </div>
+const SEVERITY_COLOR = { 1: 'var(--accent-green)', 2: 'var(--warning-orange)', 3: 'var(--danger-red)' };
+
+function _observationSymptomsText(o) {
+  return (o.symptoms || []).map(symptomLabel).join(', ');
+}
+
+function _renderOpenObservationCard(o) {
+  const rank = effectiveSeverityRank(o);
+  const days = daysBetweenIso(o.date, todayIso());
+  return `
+    <div class="glass-card" style="padding:12px 14px; margin-bottom:10px; border-left:4px solid ${SEVERITY_COLOR[rank]};">
+      <div style="display:flex; justify-content:space-between; gap:8px;">
+        <div style="font-weight:700; font-size:0.9rem; color:var(--text-primary);">🤒 ${escapeHtml(_observationSymptomsText(o) || 'Not')}</div>
+        <div style="font-size:0.7rem; color:var(--text-muted); white-space:nowrap;">${escapeHtml(o.date)} · ${days === 0 ? 'bugün' : days + ' gün önce'}</div>
+      </div>
+      <div style="font-size:0.75rem; color:var(--text-secondary); margin-top:4px;">
+        Şiddet: <strong style="color:${SEVERITY_COLOR[rank]}">${severityLabel(o.severity)}</strong>${o.temperature ? ` · Ateş: <strong>${o.temperature} °C</strong>` : ''}${(o.treatmentIds || []).length ? ` · 💉 ${o.treatmentIds.length} tedavi` : ''}
+      </div>
+      ${o.note ? `<div style="font-size:0.75rem; color:var(--text-muted); margin-top:4px; font-style:italic;">📝 ${escapeHtml(o.note)}</div>` : ''}
+      <div style="display:flex; gap:8px; margin-top:10px;">
+        <button class="btn-obs-resolve" data-obs-id="${escapeHtml(o.id)}" style="flex:1; padding:8px; border-radius:10px; border:none; background:var(--accent-green); color:#fff; font-weight:700; font-size:0.78rem; cursor:pointer;">✅ İyileşti</button>
+        <button class="btn-obs-treat" data-obs-id="${escapeHtml(o.id)}" style="flex:1; padding:8px; border-radius:10px; border:1px solid rgba(239,68,68,0.4); background:rgba(239,68,68,0.12); color:var(--danger-red); font-weight:700; font-size:0.78rem; cursor:pointer;">💉 Tedavi Uygula</button>
+      </div>
+    </div>
+  `;
+}
+
+function _renderObservationHistoryItem(o) {
+  const rank = effectiveSeverityRank(o);
+  const statusHtml = o.status === 'open'
+    ? `<div style="color:${SEVERITY_COLOR[rank]}; font-weight:700; margin-top:3px; font-size:0.65rem;">● Açık</div>`
+    : `<div style="color:var(--accent-green); margin-top:3px; font-size:0.65rem; font-weight:600;">✅ İyileşti${o.resolvedDate ? ' ' + escapeHtml(o.resolvedDate) : ''}</div>`;
+  return `
+    <div class="med-history-item" style="padding:12px 14px; border-left:4px solid ${SEVERITY_COLOR[rank]}; margin-bottom:10px; background:rgba(15,23,42,0.5); border-radius:0 12px 12px 0; border-top:1px solid rgba(255,255,255,0.05); border-right:1px solid rgba(255,255,255,0.05); border-bottom:1px solid rgba(255,255,255,0.05);">
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
+        <div style="flex:1; min-width:0;">
+          <div style="font-weight:700; font-size:0.9rem; color:var(--text-primary); display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+            <span>🤒</span>
+            <span>${escapeHtml(_observationSymptomsText(o) || 'Belirti notu')}</span>
+            <span style="font-size:0.65rem; padding:2px 8px; border-radius:10px; font-weight:600; background:rgba(245,158,11,0.15); color:#fbbf24;">Belirti · ${severityLabel(o.severity)}</span>
           </div>
-          <div style="font-size:0.7rem; color:var(--text-muted); text-align:right; flex-shrink:0;">
-            <div style="font-weight:600;">${r.date}</div>
-            ${r.isActive ? '<div style="color:var(--danger-red); font-weight:700; margin-top:3px; font-size:0.65rem;">🛑 Karantinada</div>' : '<div style="color:var(--accent-green); margin-top:3px; font-size:0.65rem; font-weight:600;">✅ Uygulandı</div>'}
+          ${o.temperature ? `<div style="font-size:0.75rem; color:var(--text-secondary); margin-top:4px;">🌡️ ${o.temperature} °C</div>` : ''}
+        </div>
+        <div style="font-size:0.7rem; color:var(--text-muted); text-align:right; flex-shrink:0;">
+          <div style="font-weight:600;">${escapeHtml(o.date)}</div>
+          ${statusHtml}
+        </div>
+      </div>
+      ${o.note ? `<div style="font-size:0.7rem; color:var(--text-muted); margin-top:4px; font-style:italic;">📝 Not: ${escapeHtml(o.note)}</div>` : ''}
+    </div>
+  `;
+}
+
+function _renderRecordHistoryItem(r) {
+  const icon = _getMedCategoryIcon(r.category, r.name);
+  const borderColor = r.isActive ? 'var(--danger-red)' : (r.type === 'vaccine' ? 'var(--accent-cyan)' : 'var(--accent-green)');
+  const categoryBadgeStyle = r.type === 'vaccine' ? 'background:rgba(6,182,212,0.15); color:#22d3ee;' : 'background:rgba(34,197,94,0.15); color:#4ade80;';
+
+  return `
+    <div class="med-history-item" style="padding:12px 14px; border-left:4px solid ${borderColor}; margin-bottom:10px; background:rgba(15,23,42,0.5); border-radius:0 12px 12px 0; border-top:1px solid rgba(255,255,255,0.05); border-right:1px solid rgba(255,255,255,0.05); border-bottom:1px solid rgba(255,255,255,0.05);">
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
+        <div style="flex:1; min-width:0;">
+          <div style="font-weight:700; font-size:0.9rem; color:var(--text-primary); display:flex; align-items:center; gap:6px;">
+            <span>${icon}</span>
+            <span>${escapeHtml(r.name)}</span>
+            <span style="font-size:0.65rem; padding:2px 8px; border-radius:10px; font-weight:600; ${categoryBadgeStyle}">${escapeHtml(r.category || 'Tedavi')}</span>
+          </div>
+          <div style="font-size:0.75rem; color:var(--text-secondary); margin-top:4px; font-weight:500;">
+            ${r.activeIngredient ? `<strong>${escapeHtml(r.activeIngredient)}</strong> • ` : ''}<span style="color:var(--accent-cyan); font-weight:700;">${escapeHtml(r.dosageStr)}</span>
           </div>
         </div>
-        ${r.courseInfo?.totalDays > 1 ? `<div style="font-size:0.7rem; color:var(--accent-purple); margin-top:6px; font-weight:600;">⏱️ ${r.courseInfo.totalDays} günlük kür tedavisi</div>` : ''}
-        ${r.pregnancyOverride ? '<div style="font-size:0.7rem; color:var(--danger-red); margin-top:4px; font-weight:600;">⚠️ Gebelik uyarısı onaylanarak uygulandı</div>' : ''}
-        ${r.notes ? `<div style="font-size:0.7rem; color:var(--text-muted); margin-top:4px; font-style:italic;">📝 Not: ${r.notes}</div>` : ''}
+        <div style="font-size:0.7rem; color:var(--text-muted); text-align:right; flex-shrink:0;">
+          <div style="font-weight:600;">${escapeHtml(r.date)}</div>
+          ${r.isActive ? '<div style="color:var(--danger-red); font-weight:700; margin-top:3px; font-size:0.65rem;">🛑 Karantinada</div>' : '<div style="color:var(--accent-green); margin-top:3px; font-size:0.65rem; font-weight:600;">✅ Uygulandı</div>'}
+        </div>
       </div>
-    `;
-  }).join('');
+      ${r.courseInfo?.totalDays > 1 ? `<div style="font-size:0.7rem; color:var(--accent-purple); margin-top:6px; font-weight:600;">⏱️ ${r.courseInfo.totalDays} günlük kür tedavisi</div>` : ''}
+      ${r.pregnancyOverride ? '<div style="font-size:0.7rem; color:var(--danger-red); margin-top:4px; font-weight:600;">⚠️ Gebelik uyarısı onaylanarak uygulandı</div>' : ''}
+      ${r.notes ? `<div style="font-size:0.7rem; color:var(--text-muted); margin-top:4px; font-style:italic;">📝 Not: ${escapeHtml(r.notes)}</div>` : ''}
+    </div>
+  `;
 }
 
 function _calculateAge(birthDateString) {

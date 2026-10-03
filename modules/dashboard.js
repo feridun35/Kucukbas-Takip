@@ -4,6 +4,8 @@
  * Refah & Isıl Stres Paneli, Akıllı Asistan Bildirimleri
  */
 
+import { computeAlerts } from '../core/alertsEngine.js';
+import { escapeHtml } from '../core/sanitize.js';
 import { getState, setState } from '../core/state.js';
 import { getCurrentUser } from '../core/auth.js';
 import { getAllQuarantinedAnimals } from '../core/healthManager.js';
@@ -22,9 +24,11 @@ export function render() {
   const state = getState();
   const computed = _computeHerdStats(state);
 
+  const alerts = computeAlerts();
+
   _container.innerHTML = `
-    ${_renderHeader()}
-    ${_renderAlerts(state.alerts, state.animals?.length || 0)}
+    ${_renderHeader(alerts.length > 0)}
+    ${_renderAlerts(alerts, state.animals?.length || 0)}
     <div class="section-title"><span class="dot"></span>Refah & Isıl Stres (Ağıl Sensörleri)</div>
     ${_renderGaugePanel(state.sensors)}
     <div class="section-title"><span class="dot"></span>Hızlı Durum</div>
@@ -132,7 +136,7 @@ export function init() {
 // Render Helpers
 // ═══════════════════════════════════════
 
-function _renderHeader() {
+function _renderHeader(hasAlerts = false) {
   const user = getCurrentUser();
   const farmName = user?.farmName || 'ShepherdAI';
   const ownerName = user?.ownerName || 'Çiftlik Yöneticisi';
@@ -140,16 +144,16 @@ function _renderHeader() {
   return `
     <div class="dashboard-header">
       <div class="header-left">
-        <span class="header-greeting">Merhaba, ${ownerName} 👋</span>
+        <span class="header-greeting">Merhaba, ${escapeHtml(ownerName)} 👋</span>
         <h1 class="header-title">
           <span class="logo-icon">🐑</span>
-          ${farmName}
+          ${escapeHtml(farmName)}
         </h1>
       </div>
       <div class="header-right">
         <div class="header-badge" id="notif-badge" title="Bildirimler">
           🔔
-          <span class="badge-dot"></span>
+          ${hasAlerts ? '<span class="badge-dot"></span>' : ''}
         </div>
       </div>
     </div>
@@ -189,9 +193,8 @@ function _renderAlerts(alerts, animalCount = 0) {
     <div class="alert-card ${typeClassMap[a.type] || ''}" style="animation-delay: ${i * 0.1}s">
       <div class="alert-icon">${a.icon}</div>
       <div class="alert-content">
-        <div class="alert-title">${a.title}</div>
-        <div class="alert-desc">${a.desc}</div>
-        <div class="alert-time">${a.time}</div>
+        <div class="alert-title">${escapeHtml(a.title)}</div>
+        <div class="alert-desc">${escapeHtml(a.desc)}</div>
       </div>
     </div>
   `).join('');

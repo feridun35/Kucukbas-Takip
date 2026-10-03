@@ -8,14 +8,16 @@
  *  v1 (sürüm alanı yok) — sağlık geçmişi hem `vaccines` hem `treatmentRecords` içinde.
  *  v2 — `vaccines` kaldırıldı; tek kaynak `treatmentRecords`, bekleyen aşılar `tasks` (type: 'vaccine').
  *  v3 — Bilinmeyen ebeveyn ('Bilinmiyor') null olarak saklanır (akrabalık kontrolü yanlış pozitif vermesin).
+ *  v4 — Metin alanlarından `<` `>` temizlenir (HTML enjeksiyonu; girişte de engelleniyor).
  */
 
+import { deepStripTags } from './sanitize.js';
 import { todayIso, toLocalIso } from './dateUtils.js';
 import { parseDate } from './herdMathEngine.js';
 import { RECORD_TYPES } from './healthRecords.js';
 import { normalizeParentId } from './breedingStatus.js';
 
-export const CURRENT_SCHEMA_VERSION = 3;
+export const CURRENT_SCHEMA_VERSION = 4;
 
 const HERD_WIDE_TARGETS = ['tüm sürü', 'sürü geneli'];
 
@@ -35,6 +37,10 @@ export function migrateTenantData(data) {
 
   if (!migrated.schemaVersion || migrated.schemaVersion < 3) {
     migrated = _migrateV2ToV3(migrated);
+  }
+
+  if (!migrated.schemaVersion || migrated.schemaVersion < 4) {
+    migrated = deepStripTags(migrated);
   }
 
   migrated.schemaVersion = CURRENT_SCHEMA_VERSION;

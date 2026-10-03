@@ -24,6 +24,7 @@ import * as HealthAi from './modules/health-ai.js';
 import * as HealthMeds from './modules/health-meds.js';
 import * as HealthVaccines from './modules/health-vaccines.js';
 import * as HealthMortality from './modules/health-mortality.js';
+import * as HealthObservations from './modules/health-observations.js';
 import * as Profile from './modules/profile.js';
 import * as AnimalProfile from './modules/animal-profile.js';
 import * as Tasks from './modules/tasks.js';
@@ -59,6 +60,7 @@ function initApp() {
   registerRoute('health-meds', HealthMeds);
   registerRoute('health-vaccines', HealthVaccines);
   registerRoute('health-mortality', HealthMortality);
+  registerRoute('health-observations', HealthObservations);
   registerRoute('profile', Profile);
   registerRoute('animal-profile', AnimalProfile);
   registerRoute('breeding', Breeding);

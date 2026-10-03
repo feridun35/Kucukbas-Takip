@@ -8,6 +8,7 @@
  * UI modülleri yalnızca bu fonksiyonları çağırır — arayüzde matematik/arınma hesaplaması YAPILMAZ.
  */
 
+import { stripTags, deepStripTags } from './sanitize.js';
 import { getPregnantAnimalIds, getOpenDamMap, DAM_STATUS } from './breedingStatus.js';
 import { todayIso, addDaysIso, normalizeDateInput } from './dateUtils.js';
 import { getAnimalById, getState, readState, setState } from './state.js';
@@ -55,7 +56,7 @@ export function getMedicationById(medId) {
  * @returns {{ success: boolean, message: string, medication?: Object }}
  */
 export function addCustomMedication(med) {
-  const name = String(med?.name || '').trim();
+  const name = stripTags(String(med?.name || ''));
   if (!name) return { success: false, message: 'İlaç adı zorunludur.' };
 
   const num = (v) => (v === '' || v === null || v === undefined) ? NaN : Number(v);
@@ -71,7 +72,7 @@ export function addCustomMedication(med) {
   if (!Number.isInteger(courseDays) || courseDays < 1) return { success: false, message: 'Kür süresi en az 1 gün olmalıdır.' };
 
   const medication = {
-    ...med,
+    ...deepStripTags(med),
     id: med.id || `custom-${Date.now()}`,
     name,
     dosagePerKg,
@@ -274,7 +275,7 @@ export function addPharmacyStock(stockEntry) {
   const remaining = parseFloat(stockEntry.remainingQuantity ?? qty);
   const allStock = [...(getState().pharmacyStock || [])];
   allStock.push({
-    ...stockEntry,
+    ...deepStripTags(stockEntry),
     id: stockEntry.id || `PS-${Date.now()}`,
     totalQuantity: qty,
     remainingQuantity: isNaN(remaining) ? qty : remaining,
@@ -457,7 +458,7 @@ export function applyTreatment({
       milkSafeDate: withdrawalCalc.milkSafeDate
     },
     pregnancyOverride: Boolean(pregnancyOverride),
-    notes: notes || ''
+    notes: stripTags(notes || '')
   };
 
   // ── State güncelleme ──

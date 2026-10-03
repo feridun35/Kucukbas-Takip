@@ -2,6 +2,7 @@
  * ShepherdAI — Kullanıcı Profili ve Uygulama Ayarları Modülü
  */
 
+import { escapeHtml } from '../core/sanitize.js';
 import { showAlert, showConfirm, showPrompt } from '../core/modal.js';
 import { getState, setState } from '../core/state.js';
 import { getCurrentUser, logout, updateCurrentUser, claimLegacyData } from '../core/auth.js';
@@ -32,13 +33,13 @@ export function render() {
       <div style="width:90px; height:90px; border-radius:50%; background:${isOwner ? 'var(--accent-blue)' : 'var(--accent-green)'}; display:flex; align-items:center; justify-content:center; font-size:40px; box-shadow:0 0 20px ${isOwner ? 'var(--accent-blue-glow)' : 'var(--accent-green-glow)'}; margin-bottom:var(--space-sm);">
         ${isOwner ? '👨‍🌾' : '🧑‍🔧'}
       </div>
-      <h2 style="font-size:1.4rem; color:var(--text-primary); font-weight:700;">${currentUser.ownerName}</h2>
+      <h2 style="font-size:1.4rem; color:var(--text-primary); font-weight:700;">${escapeHtml(currentUser.ownerName)}</h2>
       <p style="color:${isOwner ? 'var(--accent-green)' : 'var(--accent-blue)'}; font-size:0.9rem; font-weight:500;">
-        ${currentUser.farmName} • ${isOwner ? 'Çiftlik Sahibi & Yönetici' : 'Çoban / Saha Çalışanı'}
+        ${escapeHtml(currentUser.farmName)} • ${isOwner ? 'Çiftlik Sahibi & Yönetici' : 'Çoban / Saha Çalışanı'}
       </p>
       <div style="display:flex; gap:6px; margin-top:8px; align-items:center;">
         <span style="font-size:0.75rem; padding:3px 10px; border-radius:12px; background:rgba(255,255,255,0.08); color:var(--text-muted);">
-          ${currentUser.email}
+          ${escapeHtml(currentUser.email)}
         </span>
         ${isDemo ? '<span style="font-size:0.75rem; padding:3px 10px; border-radius:12px; background:rgba(59,130,246,0.2); color:var(--accent-blue); font-weight:600;">Demo</span>' : '<span style="font-size:0.75rem; padding:3px 10px; border-radius:12px; background:rgba(34,197,94,0.2); color:var(--accent-green); font-weight:600;">Canlı İşletme</span>'}
       </div>
@@ -83,7 +84,7 @@ export function render() {
           <span style="font-size:1.2rem;">🏠</span>
           <div>
             <h4 style="font-size:1rem; color:var(--text-primary);">Çiftlik Adı</h4>
-            <p style="font-size:0.75rem; color:var(--text-muted);">${currentUser.farmName}</p>
+            <p style="font-size:0.75rem; color:var(--text-muted);">${escapeHtml(currentUser.farmName)}</p>
           </div>
         </div>
         <span style="color:var(--text-muted);">❯</span>
@@ -190,11 +191,8 @@ export function init() {
   const btnSensors = _container.querySelector('#btn-sensor-rate');
   if (btnSensors) {
     btnSensors.addEventListener('click', async () => {
-      const isFast = await showConfirm('Sensör Ayarları', 'Tarama sıklığını 5 saniyeye (Yüksek Güç Tüketimi) düşürmek ister misiniz?', '⚡');
-      if (isFast) {
-        btnSensors.querySelector('span:last-child').innerText = '5 sn';
-        showAlert('Güncellendi', 'Sensör tarama hızı 5 saniye olarak ayarlandı. Batarya tüketimi artacaktır.', '🔋');
-      }
+      // ESP32 entegrasyonu henüz yok: ayar yapılmış gibi göstermek yerine durumu açıkça bildir
+      showAlert('Sensör Ayarları', 'ESP32 sensör bağlantısı henüz kurulmadı. Tarama sıklığı, cihaz bağlandığında bu ekrandan ayarlanabilecek.', '📡');
     });
   }
 

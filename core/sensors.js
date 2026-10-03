@@ -4,9 +4,10 @@
  * Donanım bağlı olmadığında rastgele değer üretmez; 'Bağlantı Yok / Bilinmiyor' durumunu korur.
  */
 
-import { getState, setState } from './state.js';
+import { getState, setState, subscribe, STATE_SOURCES } from './state.js';
 
 let _pollingInterval = null;
+let _unsubscribeLoad = null;
 
 /**
  * Sensör verilerini kontrol et
@@ -62,5 +63,12 @@ export function startSensorPolling(intervalMs = 60000) {
   if (_pollingInterval) clearInterval(_pollingInterval);
   updateSensorData();
   _pollingInterval = setInterval(updateSensorData, intervalMs);
+
+  // Oturum açıldığında / hesap değiştiğinde sensör durumu bir sonraki yoklamayı beklemeden güncellenir
+  if (!_unsubscribeLoad) {
+    _unsubscribeLoad = subscribe((meta) => {
+      if (meta?.source === STATE_SOURCES.LOAD) updateSensorData();
+    });
+  }
   return _pollingInterval;
 }

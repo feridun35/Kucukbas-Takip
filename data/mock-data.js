@@ -57,33 +57,6 @@ export const mockSensorData = {
   }
 };
 
-// ── AI Asistan Bildirimleri ──
-export const mockAlerts = [
-  {
-    id: 1,
-    type: 'danger',
-    icon: '🌡️',
-    title: '102 nolu koyunda ısıl stres tespiti',
-    desc: 'Vücut sıcaklığı 40.8°C — acil soğutma ve gölgelendirme önerilir.',
-    time: '12 dk önce'
-  },
-  {
-    id: 2,
-    type: 'warning',
-    icon: '🌾',
-    title: 'Yem stoku kritik seviyede',
-    desc: 'Mevcut stoklarla tahmini 2 gün yem kapasitesi kaldı. Sipariş oluşturun.',
-    time: '1 saat önce'
-  },
-  {
-    id: 3,
-    type: 'info',
-    icon: '🐑',
-    title: '45 nolu koyun doğuma yakın',
-    desc: 'Tahmini doğum 2 gün içinde. Doğum bölmesini hazırlayın.',
-    time: '3 saat önce'
-  }
-];
 
 // ── SÜRÜ DİZİSİ (MULTI-ANIMAL) ──
 export const animalsArray = [
