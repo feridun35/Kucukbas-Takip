@@ -75,6 +75,9 @@ flowchart LR
   mig["migrations.js"]
   herdMath["herdMathEngine.js"]
   records["healthRecords.js<br/>(saf)"]
+  bstat["breedingStatus.js<br/>(saf)"]
+  merge["syncMerge.js<br/>(saf)"]
+  dates["dateUtils.js<br/>(saf, herkes kullanır)"]
   health["healthManager.js"]
   herdMgr["herdManager.js"]
   feed["feedManager.js"]
@@ -86,7 +89,16 @@ flowchart LR
 
   state --> herdMath
   state --> mig
+  state --> merge
   state <--> sync
+  sync --> merge
+  sync --> mig
+  herdMath --> bstat
+  health --> bstat
+  breed --> bstat
+  breed --> work
+  mig --> bstat
+  fin --> herdMath
   mig --> herdMath
   mig --> records
   herdMath --> records
@@ -106,7 +118,11 @@ flowchart LR
   auth --> sync
 ```
 
-`healthRecords.js` state'e bağımlı olmayan saf fonksiyonlardır (arınma hesabı, karantina listesi, aşı ajandası). Böylece hem her `setState`'te çalışan `herdMathEngine` hem de UI'a hizmet eden `healthManager` aynı kuralı kullanır.
+Saf modüller state'e bağımlı değildir; hem her `setState`'te çalışan `herdMathEngine` hem de UI'a hizmet eden motorlar aynı kuralı kullanır:
+- `healthRecords.js` — arınma hesabı, karantina listesi, aşı ajandası
+- `breedingStatus.js` — anaç bazında gebelik durumu, gebe hayvan listesi
+- `syncMerge.js` — üç yönlü kayıt bazında birleştirme
+- `dateUtils.js` — yerel saat dilimine göre takvim tarihi (`todayIso`, `addDaysIso`, `daysBetweenIso`). `toISOString()` UTC verdiği için gün hesabında kullanılmaz.
 
 **Kalan döngüsel bağımlılıklar** (çalışıyor, ileride ele alınabilir): `state.js ⇄ syncManager.js`, `router.js ⇄ auth.js`.
 
@@ -158,11 +174,11 @@ Router koruması: oturum yoksa her rota `#auth`'a, oturum varken `#auth` → `#d
 
 ## 4. Veri Katmanı: AppState
 
-### 4.1 State şeması (`core/state.js` → `EMPTY_STATE_TEMPLATE`, şema v2)
+### 4.1 State şeması (`core/state.js` → `EMPTY_STATE_TEMPLATE`, şema v3)
 
 ```
 AppState
-├── schemaVersion: 2                      ← core/migrations.js
+├── schemaVersion: 3                      ← core/migrations.js
 ├── Oturum anahtarları (hiçbir yere yazılmaz)
 │   └── currentPage, currentUser, currentTenantKey
 ├── Cihaz-yerel anahtarlar (localStorage'a yazılır, buluta GİTMEZ, buluttan EZİLMEZ)
@@ -268,9 +284,17 @@ sequenceDiagram
   else
     S->>H: syncHerdMathState — özetleri yeniden hesapla
     S->>L: shepherd_data_<id> ← yerel yük
-    opt çiftlik verisi değiştiyse VE demo değilse VE ilk bulut yüklemesi bittiyse
-      S->>Y: pushLocalStateToCloud (1.2 sn debounce)
-      Y->>C: upsert (JWT ile, owner_id = auth.uid())
+    opt çiftlik verisi değiştiyse VE demo değilse
+      S->>Y: pushLocalStateToCloud — meta: dirty=true, rev++
+      opt bulut eşitlemesi tamam VE çevrimiçi (1.2 sn debounce)
+        Y->>C: updated_at oku
+        alt bulut son görülen sürümde değil (başka cihaz yazmış)
+          Y->>C: farm_payload oku
+          Y->>S: mergeFarmPayloads(base, yerel, bulut) → applyCloudState
+        end
+        Y->>C: update ... where updated_at = son görülen (iyimser kilit)
+        Y->>L: base ← gönderilen yük, rev değişmediyse dirty=false
+      end
     end
     S-->>R: notify {source:'local' | 'sensors'}
   end
@@ -283,6 +307,19 @@ sequenceDiagram
   R->>R: refreshCurrentRoute() — modal açık / alana yazılıyorsa ertelenir
 ```
 
+**Senkron güvenceleri** (`core/syncManager.js`):
+- Her yerel değişiklik kiracının meta kaydını (`shepherd_sync_meta_<kiracı>`) kirli işaretler. Kirli veri buluta yazılana kadar buluttan **ezilmez**; uygulama kapatılıp açılsa bile.
+- Açılışta (`syncOnLoad`):
+  - Kirli veri yoksa bulut verisi alınır.
+  - Bulut değişmemişse yerel veri gönderilir.
+  - İkisi de değişmişse kayıt bazında birleştirilir.
+- Bulut okuması başarısız olursa push yapılmaz (bayat cihaz bulutu ezemez). Okuma bağlantı geldiğinde, sekme odağında ve 6 sn'lik yoklamada yeniden denenir.
+- İki cihaz aynı anda yazarsa, güncelleme yalnızca son görülen `updated_at` üzerine yapılır; çakışmada önce birleştirilir.
+- Birleştirme kayıt bazındadır (`syncMerge.js`):
+  - Yalnızca bir tarafta değişen kayıt o tarafın sürümünü alır.
+  - İki tarafta da değişen kayıtta yerel kazanır.
+  - Silmeler yayılır, yeni kayıtların hepsi korunur.
+
 Bildirimler `{ source, keys }` meta bilgisi taşır: `local`, `cloud`, `load`, `sensors`, `reset`. Router yalnızca `cloud` kaynağında açık sayfayı yeniden çizer (scroll konumu korunur); yerel işlemlerde sayfalar kendi yeniden çizimlerini yapar. Kendi yaptığımız push'un `updated_at` değeri sunucudan okunur, böylece kendi yazdığımız veri "başka cihazdan güncelleme" sanılmaz; gönderilmeyi bekleyen yerel değişiklik varken bulut verisi uygulanmaz.
 
 ### 5.3 Kimlik doğrulama ve bulut güvenlik modeli
@@ -294,13 +331,15 @@ Bildirimler `{ source, keys }` meta bilgisi taşır: `local`, `cloud`, `load`, `
 | Kiracı anahtarı | `shepherd_data_<auth.uid()>`. |
 | Veritabanı | `farms_data(tenant_key, owner_id, farm_payload, updated_at)`. RLS: kullanıcı yalnızca `owner_id = auth.uid()` satırını okuyup yazar, `tenant_key` biçimi zorlanır. Anon rol hiçbir satıra erişemez. |
 | Demo | `loginAsDemo()` ile şifresiz açılır, veri yalnızca bu cihazda tutulur, buluta hiç istek atılmaz (durum rozeti: 💾 Yalnızca Bu Cihaz). |
-| Eski hesaplar | `schema.sql` eski kullanıcı listesini istemcinin erişemediği `legacy_users` tablosuna bcrypt hash olarak taşır ve düz metin satırını siler. Kullanıcı aynı e-postayla giriş/kayıt olduğunda `claim_legacy_farm(eski_şifre)` eski çiftlik satırını yeni hesaba bağlar. Bu cihazda eski kayıt varsa giriş sırasında hesap otomatik oluşturulur ve yerel veri yeni anahtara kopyalanır. |
+| Eski hesaplar | `schema.sql` eski kullanıcı listesini istemcinin erişemediği `legacy_users` tablosuna bcrypt hash olarak taşır ve düz metin satırını siler. Kullanıcı aynı e-postayla giriş/kayıt olduğunda `claim_legacy_farm(eski_şifre)` eski çiftlik satırını yeni hesaba bağlar. Yeni hesapta zaten veri varsa eski satır silinmez, yükü döndürülür ve kayıt bazında birleştirilir. Bu işlem profil sayfasındaki "Eski Hesap Verisini Aktar" ile sonradan da yapılabilir. Bu cihazda eski kayıt varsa giriş sırasında hesap otomatik oluşturulur ve yerel veri yeni anahtara kopyalanır. |
 
 | localStorage anahtarı | İçerik |
 |---|---|
 | `shepherd_current_user` | Aktif kullanıcı profili (şifresiz) |
 | `shepherd_data_<uid>` / `shepherd_data_demo` | Kiracının çiftlik state'i |
-| `shepherd_pending_sync_queue` | Çevrimdışıyken son bekleyen push (tek kayıt) |
+| `shepherd_sync_meta_<kiracı>` | `{ dirty, rev, cloudUpdatedAt }`: gönderilmemiş değişiklik takibi |
+| `shepherd_sync_base_<kiracı>` | Bulutla en son eşitlenen yük (üç yönlü birleştirmenin ortak tabanı) |
+| `shepherd_pending_sync_queue` | *Eski sürüm.* Varsa kirli veri olarak devralınır ve silinir. |
 | `sb-<proje>-auth-token` | Supabase oturum token'ı (supabase-js yönetir) |
 | `shepherd_users_registry` | *Eski sürüm.* Yalnızca göç için okunur, göç tamamlanınca silinir. |
 
@@ -322,15 +361,38 @@ Bildirimler `{ source, keys }` meta bilgisi taşır: `local`, `cloud`, `load`, `
 
 ## 7. Mimari Gözlemler
 
-### Çözülenler
+### Çözülenler (1. tur: mimari)
 
-1. ~~Reaktiflik yok~~ → Router state'e abone; bulut güncellemesi açık sayfayı yeniden çiziyor (modal/form kullanımında erteleniyor). Cihaz-yerel anahtarlar buluttan ezilmiyor.
-2. ~~İki paralel sağlık kaydı / iki karantina tanımı~~ → `treatmentRecords` tek kaynak; karantina her yerde `healthRecords.computeQuarantinedAnimals` ile hesaplanıyor; tedavi `animal.status`'a dokunmuyor.
-3. ~~İş mantığı UI'a sızmış~~ → ölüm, doğum, hayvan ekleme/güncelleme `herdManager`'a, yem deposu `feedManager`'a taşındı; sabit listeler `data/` altında.
-4. ~~Güvenlik açığı~~ → Supabase Auth + sahiplik bazlı RLS; düz metin şifre listesi kaldırıldı; `admin/admin` girişi kaldırıldı, demo yerel.
+1. ~~Reaktiflik yok~~ → Router state'e abone; bulut güncellemesi açık sayfayı yeniden çiziyor (modal/form kullanımında erteleniyor).
+2. ~~İki paralel sağlık kaydı / iki karantina tanımı~~ → `treatmentRecords` tek kaynak.
+3. ~~İş mantığı UI'a sızmış~~ → `herdManager`, `feedManager`, `breedingManager.saveMatingRecord`.
+4. ~~Güvenlik açığı~~ → Supabase Auth + sahiplik bazlı RLS.
 
-### Açık olanlar (sonraki inceleme)
+### Çözülenler (2. tur: mantıksal hatalar)
 
-5. **Her `setState` maliyetli:** özet yeniden hesaplama + tüm state'in JSON'a yazılması + `getState()` derin kopyası. Oturum anahtarları artık bu yolu atlıyor.
-6. **Döngüsel importlar** (`state⇄sync`, `router⇄auth`).
-7. **Mock verisine kalıcı bağlar:** `financeEngine` ve `herdMathEngine` fiyatları `mock-data.marketPrices`'tan, `animal-profile` eksik alanları `mock-data.animalData`'dan dolduruyor.
+| # | Hata | Çözüm |
+|---|---|---|
+| 1 | Çevrimdışı değişiklik açılışta buluttan eziliyordu | Kirli veri takibi + açılışta birleştirme |
+| 2 | Bulut okuması başarısızsa bayat cihaz bulutu eziyordu | Okuma başarılı olana kadar push yok, otomatik yeniden deneme |
+| 3 | Eşleşme hiçbir zaman "gebe" olmuyordu, ilaçta gebelik uyarısı yoktu | Anaç bazlı durum (`breedingStatus.js`), "Gebelik Doğrulandı / Tutmadı" adımları. Doğrulanmamış katımda "olası gebe" uyarısı veriliyor. |
+| 4 | Kür dozları stoktan düşmüyordu, doz gün sayısına bölünüyordu | Her doz tam doz; doz görevi tamamlanınca stoktan düşülüyor (stok yetmezse görev tamamlanmıyor) |
+| 5 | Ebeveyni bilinmeyenler "kardeş" çıkıyordu | Bilinmeyen ebeveyn `null` (v3 göçü) |
+| 6 | Grup katımında bir doğum tüm grubu kapatıyordu | Yalnızca o anacın durumu kapanıyor; ikiz/üçüz destekleniyor |
+| 7 | Erkek hayvan anaç olarak eşleşebiliyordu | Erkek profili koç olarak katım açıyor; cinsiyet ve açık katım doğrulaması core'da |
+| 8 | Açık şişe raf ömrü izlenmiyordu | İlk kullanımda açılış tarihi işleniyor, önce açık şişe kullanılıyor, süresi dolan kullanılmıyor |
+| 9 | Boş arınma süresi 0 gün kaydediliyordu | Arınma ve dozaj zorunlu |
+| 10 | Geçmişte "null" doz | Doz yoksa gösterilmiyor |
+| 11 | Ölen hayvanın görevleri kalıyordu | Bireysel görevler iptal ediliyor, açık katımı LOST olarak kapanıyor |
+| 12 | Serbest metin vade tarihi | Tarih seçici ve normalizasyon |
+| 13 | 00:00–03:00 arası "bugün" bir gün önceydi | `dateUtils.js` (yerel takvim) |
+| — | Bireysel görevler hep TR-102'ye atanıyordu | Görüntülenen hayvana atanıyor |
+| — | Sahte göstergeler (karkas %48.5, ikizlik %34, hayvan başı 180 ₺ gelir, rastgele ROI grafiği) | KPI'lar kayıtlı veriden hesaplanıyor, hesaplanamayan "Veri yok". ROI'deki varsayımlar `data/finance-assumptions.js`'te ve ekranda listeleniyor. Yem maliyeti depodaki gerçek fiyatlardan. |
+| — | Ayıklama listesi "undefined" gösteriyordu | Doğumdan bu yana günlük artış ve yem maliyetinden hesaplanıyor |
+| — | İki cihazdan eşzamanlı düzenlemede veri kaybı | Kayıt bazında birleştirme + iyimser kilit |
+| — | Stok formunda SKT boşsa 2027-12-31 uyduruluyordu, birim karışıklığı | SKT zorunlu, birim ilacın doz birimi |
+
+### Açık olanlar
+
+- **Her `setState` maliyetli:** özet yeniden hesaplama + tüm state'in JSON'a yazılması + `getState()` derin kopyası.
+- **Döngüsel importlar:** `state⇄sync`, `router⇄auth`.
+- **`animal-profile` boş alanları sahte veriyle dolduruyor:** eksik alanlar `mock-data.animalData`'dan geliyor.

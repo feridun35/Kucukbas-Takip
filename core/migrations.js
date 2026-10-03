@@ -7,12 +7,15 @@
  * Şema sürümleri:
  *  v1 (sürüm alanı yok) — sağlık geçmişi hem `vaccines` hem `treatmentRecords` içinde.
  *  v2 — `vaccines` kaldırıldı; tek kaynak `treatmentRecords`, bekleyen aşılar `tasks` (type: 'vaccine').
+ *  v3 — Bilinmeyen ebeveyn ('Bilinmiyor') null olarak saklanır (akrabalık kontrolü yanlış pozitif vermesin).
  */
 
+import { todayIso, toLocalIso } from './dateUtils.js';
 import { parseDate } from './herdMathEngine.js';
 import { RECORD_TYPES } from './healthRecords.js';
+import { normalizeParentId } from './breedingStatus.js';
 
-export const CURRENT_SCHEMA_VERSION = 2;
+export const CURRENT_SCHEMA_VERSION = 3;
 
 const HERD_WIDE_TARGETS = ['tüm sürü', 'sürü geneli'];
 
@@ -30,12 +33,16 @@ export function migrateTenantData(data) {
     migrated = _migrateV1ToV2(migrated);
   }
 
+  if (!migrated.schemaVersion || migrated.schemaVersion < 3) {
+    migrated = _migrateV2ToV3(migrated);
+  }
+
   migrated.schemaVersion = CURRENT_SCHEMA_VERSION;
   return migrated;
 }
 
 function _toIso(dateVal) {
-  return parseDate(dateVal).toISOString().split('T')[0];
+  return toLocalIso(parseDate(dateVal));
 }
 
 function _resolveTargets(target, animals) {
@@ -115,11 +122,23 @@ function _migrateV1ToV2(data) {
         targetTag: target.animalId,
         dueDate: _toIso(v.date),
         status: 'pending',
-        createdAt: new Date().toISOString().split('T')[0]
+        createdAt: todayIso()
       });
     }
   });
 
   const { vaccines: _removed, ...rest } = data;
   return { ...rest, treatmentRecords, tasks };
+}
+
+function _migrateV2ToV3(data) {
+  if (!Array.isArray(data.animals)) return data;
+  return {
+    ...data,
+    animals: data.animals.map(a => ({
+      ...a,
+      mother: normalizeParentId(a.mother),
+      father: normalizeParentId(a.father)
+    }))
+  };
 }

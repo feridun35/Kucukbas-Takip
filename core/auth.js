@@ -15,7 +15,7 @@
  * - Buluttaki eski çiftlik verisi `claim_legacy_farm` RPC'si ile (eski şifre doğrulanarak) devralınır.
  */
 
-import { loadTenantState, clearTenantState, initNewTenantState } from './state.js';
+import { loadTenantState, clearTenantState, initNewTenantState, importFarmData } from './state.js';
 import { navigateTo } from './router.js';
 import { getSupabaseClient, tenantKeyForUserId, flushPendingPushes } from './syncManager.js';
 
@@ -177,6 +177,7 @@ async function _completeSignIn(client, sbUser, password, legacyUser = null) {
 
   _setCurrentUser(profile);
   loadTenantState(profile);
+  if (claimed?.legacyPayload) importFarmData(claimed.legacyPayload);
   return profile;
 }
 
@@ -307,7 +308,40 @@ async function _registerWithSupabase(client, { email, password, farmName, ownerN
   _removeLegacyUser(email);
   _setCurrentUser(profile);
   loadTenantState(profile);
+  if (claimed?.legacyPayload) importFarmData(claimed.legacyPayload);
   return { success: true, user: profile, migrated: true };
+}
+
+/**
+ * Oturum açıkken eski sürüm hesabının çiftlik verisini (eski şifreyle doğrulayarak) devralır.
+ * Yeni hesapta veri varsa eski veri kayıt bazında birleştirilir; mevcut kayıtlar silinmez.
+ */
+export async function claimLegacyData(oldPassword) {
+  const user = getCurrentUser();
+  if (!user || user.isDemo) return { success: false, message: 'Bu işlem demo hesabında yapılamaz.' };
+  if (!oldPassword) return { success: false, message: 'Eski şifrenizi giriniz.' };
+
+  const { client, error: cloudError } = _requireCloud();
+  if (cloudError) return { success: false, message: cloudError };
+
+  const claimed = await _claimLegacyCloudFarm(client, oldPassword);
+  if (!claimed) {
+    return { success: false, message: 'Bu e-posta için eski hesap bulunamadı ya da eski şifre hatalı.' };
+  }
+
+  // Bu cihazda eski hesabın yerel verisi varsa o da birleştirilir
+  try {
+    const legacyLocal = claimed.legacyStorageKey && localStorage.getItem(claimed.legacyStorageKey);
+    if (legacyLocal && claimed.legacyStorageKey !== user.storageKey) importFarmData(JSON.parse(legacyLocal));
+  } catch (e) {}
+
+  if (claimed.legacyPayload) {
+    importFarmData(claimed.legacyPayload);
+  } else {
+    // Eski satır doğrudan bu hesaba devredildi — buluttan yeniden yükle
+    loadTenantState(user);
+  }
+  return { success: true, message: 'Eski hesabınızın verileri bu hesaba aktarıldı.' };
 }
 
 /**

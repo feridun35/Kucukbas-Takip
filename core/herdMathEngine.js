@@ -5,7 +5,9 @@
  * ve ekli hayvanların verilerine bağlı olarak dinamik hesaplar.
  */
 
-import { marketPrices } from '../data/mock-data.js';
+import { getPregnantAnimalIds } from './breedingStatus.js';
+import { MARKET_PRICES } from '../data/finance-assumptions.js';
+import { todayIso, daysBetweenIso, isValidIsoDate } from './dateUtils.js';
 import { computeQuarantinedAnimals, isVaccineRecord } from './healthRecords.js';
 
 /**
@@ -51,6 +53,38 @@ export function calculateAnimalDailyFeed(animal) {
   };
 }
 
+function _pricedKgFeeds(feedInventory) {
+  return (feedInventory || []).filter(f => f.unit === 'kg' && parseFloat(f.amount) > 0 && f.unitPrice > 0);
+}
+
+function _hasPricedFeed(feedInventory) {
+  return _pricedKgFeeds(feedInventory).length > 0;
+}
+
+/**
+ * Depodaki fiyatlı (kg) yemlerin miktar ağırlıklı ortalama birim fiyatı.
+ * Depoda fiyatlı yem yoksa piyasa varsayımı kullanılır.
+ */
+export function getAverageFeedPrice(feedInventory = []) {
+  const feeds = _pricedKgFeeds(feedInventory);
+  const totalKg = feeds.reduce((s, f) => s + parseFloat(f.amount), 0);
+  if (totalKg <= 0) return MARKET_PRICES.feedPerKg;
+  return feeds.reduce((s, f) => s + parseFloat(f.amount) * f.unitPrice, 0) / totalKg;
+}
+
+/**
+ * Doğumdan bugüne ortalama günlük canlı ağırlık artışı (kg/gün).
+ * Doğum tarihi, doğum ağırlığı ve güncel ağırlık kayıtlıysa hesaplanır; yoksa null.
+ */
+export function calculateAverageDailyGain(animal) {
+  if (!animal || !isValidIsoDate(animal.birthDate)) return null;
+  const birthWeight = parseFloat(animal.birthWeight);
+  const weight = parseFloat(animal.weight);
+  const ageDays = daysBetweenIso(animal.birthDate, todayIso());
+  if (!(birthWeight > 0) || !(weight > birthWeight) || !(ageDays >= 14)) return null;
+  return (weight - birthWeight) / ageDays;
+}
+
 /**
  * Tüm sürü için toplam günlük yem tüketimi ve maliyet metriklerini hesaplar.
  * 
@@ -80,8 +114,8 @@ export function calculateHerdFeedMetrics(animals = [], feedInventory = []) {
     totalFreshFeedKg += feed.freshFeedKg;
   });
 
-  // Rasyon ortalama kg birim maliyeti (arpa/saman/yonca karma ortalaması ~7.50 TL/kg)
-  const avgFeedPricePerKg = marketPrices?.feed?.barley || 7.50;
+  // Depodaki fiyatlı yemlerin ağırlıklı ortalama kg fiyatı (yoksa piyasa varsayımı)
+  const avgFeedPricePerKg = getAverageFeedPrice(feedInventory);
   const dailyFeedCost = totalFreshFeedKg * avgFeedPricePerKg;
 
   const totalFeedKg = (feedInventory || [])
@@ -98,7 +132,9 @@ export function calculateHerdFeedMetrics(animals = [], feedInventory = []) {
     feedPerHead: parseFloat(feedPerHead.toFixed(2)),
     costPerHead: parseFloat(costPerHead.toFixed(2)),
     totalFeedKg,
-    stockDaysLeft
+    stockDaysLeft,
+    feedPricePerKg: parseFloat(avgFeedPricePerKg.toFixed(2)),
+    feedPriceIsAssumed: !_hasPricedFeed(feedInventory)
   };
 }
 
@@ -203,10 +239,10 @@ export function calculateHerdSummaryStats(animals = []) {
  * @param {Array} tasks
  * @returns {Object} healthSummary
  */
-export function calculateHealthSummaryStats(animals = [], treatmentRecords = [], tasks = []) {
+export function calculateHealthSummaryStats(animals = [], treatmentRecords = [], tasks = [], breedingRecords = []) {
   const sick = animals.filter(a => a.status === 'danger').length;
   const quarantine = computeQuarantinedAnimals(animals, treatmentRecords).length;
-  const expectedBirths = animals.filter(a => a.group === 'Gebe').length;
+  const expectedBirths = getPregnantAnimalIds(animals, breedingRecords).length;
 
   const upcomingVaccine = (tasks || [])
     .filter(t => t.type === 'vaccine' && t.status !== 'completed' && t.dueDate)
@@ -244,18 +280,19 @@ export function syncHerdMathState(AppState) {
   const tasks = AppState.tasks || [];
 
   const herdSummary = calculateHerdSummaryStats(animals);
-  const healthSummary = calculateHealthSummaryStats(animals, treatmentRecords, tasks);
+  const healthSummary = calculateHealthSummaryStats(animals, treatmentRecords, tasks, AppState.breedingRecords || []);
   const financeMetrics = calculateHerdFeedMetrics(animals, feedInventory);
 
+  // Not: Gelir kaydı tutulmadığı için aylık gelir/ROI özeti üretilmez (önceki sürüm hayvan başı 180 ₺ uyduruyordu)
   const financeSummary = {
     dailyFeedCost: financeMetrics.dailyFeedCost,
     dailyFeedKg: financeMetrics.dailyFeedKg,
     feedStockDays: financeMetrics.stockDaysLeft,
-    monthlyRevenue: Math.round(animals.length * 180), // Tahmini aylık verim
     monthlyCost: Math.round(financeMetrics.dailyFeedCost * 30),
-    roi: financeMetrics.dailyFeedCost > 0 ? parseFloat(((animals.length * 180 / (financeMetrics.dailyFeedCost * 30)) * 100).toFixed(1)) : 0,
     feedPerHead: financeMetrics.feedPerHead,
-    costPerHead: financeMetrics.costPerHead
+    costPerHead: financeMetrics.costPerHead,
+    feedPricePerKg: financeMetrics.feedPricePerKg,
+    feedPriceIsAssumed: financeMetrics.feedPriceIsAssumed
   };
 
   AppState.herdSummary = herdSummary;

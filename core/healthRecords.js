@@ -10,7 +10,7 @@
  * animal.status alanı yalnızca klinik sağlık durumunu ifade eder ('good' | 'warning' | 'danger').
  */
 
-const DAY_MS = 1000 * 60 * 60 * 24;
+import { todayIso, addDaysIso, daysBetweenIso } from './dateUtils.js';
 
 /** Kayıt türleri */
 export const RECORD_TYPES = {
@@ -28,21 +28,17 @@ export const RECORD_TYPES = {
  * @returns {{ meatSafeDate, milkSafeDate, meatDaysLeft, milkDaysLeft, isMeatSafe, isMilkSafe }}
  */
 export function calculateWithdrawalFromLastDose(meatDays, milkDays, lastDoseDate) {
-  const base = new Date(lastDoseDate);
-  const now = new Date();
+  const today = todayIso();
+  const meatSafeDate = addDaysIso(lastDoseDate, meatDays || 0);
+  const milkSafeDate = addDaysIso(lastDoseDate, milkDays || 0);
 
-  const meatSafe = new Date(base);
-  meatSafe.setDate(meatSafe.getDate() + (meatDays || 0));
-
-  const milkSafe = new Date(base);
-  milkSafe.setDate(milkSafe.getDate() + (milkDays || 0));
-
-  const meatDaysLeft = Math.max(0, Math.ceil((meatSafe - now) / DAY_MS));
-  const milkDaysLeft = Math.max(0, Math.ceil((milkSafe - now) / DAY_MS));
+  // Güvenli tarih gününün kendisinde ürün kullanılabilir (kalan 0 gün)
+  const meatDaysLeft = Math.max(0, daysBetweenIso(today, meatSafeDate) || 0);
+  const milkDaysLeft = Math.max(0, daysBetweenIso(today, milkSafeDate) || 0);
 
   return {
-    meatSafeDate: meatSafe.toISOString().split('T')[0],
-    milkSafeDate: milkSafe.toISOString().split('T')[0],
+    meatSafeDate,
+    milkSafeDate,
     meatDaysLeft,
     milkDaysLeft,
     isMeatSafe: meatDaysLeft === 0,
@@ -137,7 +133,7 @@ export function computeQuarantinedAnimals(animals, treatmentRecords) {
  * @returns {Array<{ id, name, date, status: 'overdue'|'upcoming'|'done', target, source }>}
  */
 export function buildVaccineAgenda(tasks, treatmentRecords, animalId = null) {
-  const todayStr = new Date().toISOString().split('T')[0];
+  const todayStr = todayIso();
 
   const pending = (tasks || [])
     .filter(t => t.type === 'vaccine' && t.status !== 'completed')
@@ -175,8 +171,7 @@ export function buildVaccineAgenda(tasks, treatmentRecords, animalId = null) {
  * Bir kürün (çok dozlu tedavinin) N. doz tarihini hesaplar.
  */
 export function getNthDoseDate(firstDateStr, intervalHours, doseNumber) {
-  const d = new Date(firstDateStr);
-  const intervalDays = (intervalHours || 24) / 24;
-  d.setDate(d.getDate() + intervalDays * (doseNumber - 1));
-  return d.toISOString().split('T')[0];
+  // 12 saatlik aralıkta 2. doz aynı gün düşer
+  const offsetDays = Math.floor(((intervalHours || 24) * (doseNumber - 1)) / 24);
+  return addDaysIso(firstDateStr, offsetDays);
 }

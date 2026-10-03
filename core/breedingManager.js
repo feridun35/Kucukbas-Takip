@@ -7,12 +7,18 @@
  * - createMatingRecord: Bireysel veya Grup eşleşme kaydı oluşturma
  * - syncBreedingTasks: Milestone'ları görev sistemine aktarma
  * - saveMatingRecord: Kaydı + takvim görevlerini tek seferde state'e yazma
+ * - confirmPregnancy / markMatingFailed: Anaç bazında gebelik doğrulama / tutmadı
+ * - applyBirthToRecords / closeDamInRecords: Doğum ve ölümün kayıtlara işlenmesi
  * - recordBirth: Gebelik kaydını sonlandırma
  * - calculateCompatibility: Genetik uyum skoru
  */
 
+import { todayIso, addDaysIso, daysBetweenIso } from './dateUtils.js';
 import { getAnimalById, getState, setState } from './state.js';
 import { buildTask } from './workforceManager.js';
+import { DAM_STATUS, getDamStatus, deriveRecordStatus, isOpenDamStatus, getOpenDamMap, normalizeParentId } from './breedingStatus.js';
+
+export { normalizeParentId } from './breedingStatus.js';
 
 // ── Sabitler ──
 const GESTATION_DAYS = 148;
@@ -21,17 +27,8 @@ const ULTRASOUND_DAY = 45;
 const LATE_GESTATION_DAY = 115;
 
 // ── Yardımcı ──
-function _addDays(dateStr, days) {
-  const d = new Date(dateStr);
-  d.setDate(d.getDate() + days);
-  return d.toISOString().split('T')[0];
-}
-
-function _daysBetween(dateStrA, dateStrB) {
-  const a = new Date(dateStrA);
-  const b = new Date(dateStrB);
-  return Math.round((b - a) / 86400000);
-}
+const _addDays = addDaysIso;
+const _daysBetween = daysBetweenIso;
 
 // ═══════════════════════════════════════════════════════════
 // 1. Biyolojik Gebelik Takvimi
@@ -57,7 +54,7 @@ export function calculateGestationMilestones(matingDate) {
  */
 export function calculateBirthDate(matingDate) {
   const expected = _addDays(matingDate, GESTATION_DAYS);
-  const today = new Date().toISOString().split('T')[0];
+  const today = todayIso();
   const daysLeft = Math.max(0, _daysBetween(today, expected));
   const daysElapsed = _daysBetween(matingDate, today);
   const progressPercent = Math.min(100, Math.round((daysElapsed / GESTATION_DAYS) * 100));
@@ -88,6 +85,7 @@ export function calculateBirthDate(matingDate) {
  * @returns {{ hasRisk: boolean, relation: string|null, details: string|null }}
  */
 export function checkInbreedingRisk(damId, sireId, animals) {
+  // Not: Ebeveyni bilinmeyen ('Bilinmiyor', boş, '-') hayvanlar ortak ebeveyne sahip SAYILMAZ.
   if (!damId || !sireId || !animals || animals.length === 0) {
     return { hasRisk: false, relation: null, details: null };
   }
@@ -96,10 +94,10 @@ export function checkInbreedingRisk(damId, sireId, animals) {
   const sire = animals.find(a => a.id === sireId);
   if (!dam || !sire) return { hasRisk: false, relation: null, details: null };
 
-  const damMother  = dam.mother  || null;
-  const damFather  = dam.father  || null;
-  const sireMother = sire.mother || null;
-  const sireFather = sire.father || null;
+  const damMother  = normalizeParentId(dam.mother);
+  const damFather  = normalizeParentId(dam.father);
+  const sireMother = normalizeParentId(sire.mother);
+  const sireFather = normalizeParentId(sire.father);
 
   // Baba-kız: Koç bu koyunun babası mı?
   if (damFather && damFather === sireId) {
@@ -164,6 +162,9 @@ export function createMatingRecord(type, data, animals) {
     startDate,
     endDate: endDate || null,
     status: 'ACTIVE',
+    damStatus: Object.fromEntries(damIds.map(id => [id, DAM_STATUS.ACTIVE])),
+    damPrevGroup: {},
+    births: [],
     milestones,
     inbreedingWarning,
     birthRecord: null
@@ -195,7 +196,8 @@ export function syncBreedingTasks(breedingRecord) {
       prio: 'High',
       scope: breedingRecord.damIds.length === 1 ? 'individual' : 'herd',
       targetTag: breedingRecord.damIds.length === 1 ? breedingRecord.damIds[0] : null,
-      dueDate: ms.cycleCheckDate
+      dueDate: ms.cycleCheckDate,
+      breedingRecordId: breedingRecord.id
     },
     {
       title: `Ultrason / Gebelik Muayenesi (${damLabel})`,
@@ -204,7 +206,8 @@ export function syncBreedingTasks(breedingRecord) {
       prio: 'High',
       scope: breedingRecord.damIds.length === 1 ? 'individual' : 'herd',
       targetTag: breedingRecord.damIds.length === 1 ? breedingRecord.damIds[0] : null,
-      dueDate: ms.ultrasoundDate
+      dueDate: ms.ultrasoundDate,
+      breedingRecordId: breedingRecord.id
     },
     {
       title: `İleri Gebelik Bakımı & Çelerme Aşısı (${damLabel})`,
@@ -213,7 +216,8 @@ export function syncBreedingTasks(breedingRecord) {
       prio: 'High',
       scope: breedingRecord.damIds.length === 1 ? 'individual' : 'herd',
       targetTag: breedingRecord.damIds.length === 1 ? breedingRecord.damIds[0] : null,
-      dueDate: ms.lateGestationDate
+      dueDate: ms.lateGestationDate,
+      breedingRecordId: breedingRecord.id
     },
     {
       title: `Tahmini Doğum — Doğum Bölmesine Alma (${damLabel})`,
@@ -222,7 +226,8 @@ export function syncBreedingTasks(breedingRecord) {
       prio: 'High',
       scope: breedingRecord.damIds.length === 1 ? 'individual' : 'herd',
       targetTag: breedingRecord.damIds.length === 1 ? breedingRecord.damIds[0] : null,
-      dueDate: ms.expectedBirthDate
+      dueDate: ms.expectedBirthDate,
+      breedingRecordId: breedingRecord.id
     }
   ];
 
@@ -237,7 +242,23 @@ export function syncBreedingTasks(breedingRecord) {
  */
 export function saveMatingRecord(type, data) {
   const state = getState();
-  const record = createMatingRecord(type, data, state.animals || []);
+  const animals = state.animals || [];
+  const byId = new Map(animals.map(a => [a.id, a]));
+  const sireIds = data.sireIds || [];
+  const damIds = data.damIds || [];
+
+  if (sireIds.length === 0 || damIds.length === 0) {
+    return { success: false, message: 'En az bir koç/teke ve bir anaç seçmelisiniz.' };
+  }
+  const wrongSire = sireIds.find(id => byId.get(id)?.gender !== 'Erkek');
+  if (wrongSire) return { success: false, message: `${wrongSire} erkek bir hayvan değil; koç/teke olarak seçilemez.` };
+  const wrongDam = damIds.find(id => byId.get(id)?.gender !== 'Dişi');
+  if (wrongDam) return { success: false, message: `${wrongDam} dişi bir hayvan değil; anaç olarak seçilemez.` };
+  const openDams = getOpenDamMap(state.breedingRecords);
+  const busyDam = damIds.find(id => openDams.has(id));
+  if (busyDam) return { success: false, message: `${busyDam} için zaten açık bir katım/gebelik kaydı var.` };
+
+  const record = createMatingRecord(type, data, animals);
   const newTasks = syncBreedingTasks(record).map(buildTask);
 
   setState({
@@ -251,29 +272,138 @@ export function saveMatingRecord(type, data) {
 // 5. Doğum Kaydı (Gebeliği Sonlandırma)
 // ═══════════════════════════════════════════════════════════
 /**
- * Aktif gebelik kaydını COMPLETED statüsüne alır ve doğum bilgisini arşivler.
- * Yavruyu sürüye EKLEMEZ — bunu animal-profile.js Doğum Bildir akışı yapar.
+ * Bir anacın doğumunu ilgili açık kayda işler (saf). Grup kaydında yalnızca o anacın durumu kapanır.
+ * Aynı anacın aynı gün ikinci yavrusu (ikiz/üçüz) aynı doğum kaydına eklenir.
  *
- * @param {string} breedingRecordId
- * @param {Object} birthData — { date, type:'Normal'|'Güç', lambCount, notes? }
- * @param {Array}  breedingRecords — Mevcut breedingRecords dizisi
- * @returns {Array} Güncellenmiş breedingRecords dizisi
+ * @param {Array}  breedingRecords
+ * @param {string} damId
+ * @param {Object} birthData — { date, babyId, type? }
+ * @returns {{ breedingRecords: Array, recordId: string|null }}
  */
-export function recordBirth(breedingRecordId, birthData, breedingRecords) {
-  return breedingRecords.map(rec => {
-    if (rec.id === breedingRecordId) {
-      return {
-        ...rec,
-        status: 'COMPLETED',
-        birthRecord: {
-          date: birthData.date || new Date().toISOString().split('T')[0],
-          type: birthData.type || 'Normal',
-          lambCount: birthData.lambCount || 1,
-          notes: birthData.notes || ''
-        }
-      };
+export function applyBirthToRecords(breedingRecords, damId, birthData) {
+  const date = birthData.date || todayIso();
+  // Önce açık kayıt; yoksa (ikizin ikinci yavrusu) aynı gün doğum yapılmış kayıt
+  let target = (breedingRecords || []).find(r =>
+    (r.damIds || []).includes(damId) && isOpenDamStatus(getDamStatus(r, damId)));
+  if (!target) {
+    target = (breedingRecords || []).find(r =>
+      (r.births || []).some(b => b.damId === damId && b.date === date));
+  }
+  if (!target) return { breedingRecords, recordId: null };
+
+  const updated = (breedingRecords || []).map(rec => {
+    if (rec.id !== target.id) return rec;
+    const births = [...(rec.births || [])];
+    const idx = births.findIndex(b => b.damId === damId && b.date === date);
+    if (idx > -1) {
+      const babyIds = [...(births[idx].babyIds || []), birthData.babyId].filter(Boolean);
+      births[idx] = { ...births[idx], babyIds, lambCount: babyIds.length };
+    } else {
+      births.push({ damId, date, type: birthData.type || 'Normal', babyIds: [birthData.babyId].filter(Boolean), lambCount: 1 });
     }
-    return rec;
+    const next = {
+      ...rec,
+      damStatus: { ...(rec.damStatus || {}), [damId]: DAM_STATUS.DELIVERED },
+      births,
+      // Geriye uyumlu özet: son doğum tarihi + toplam yavru
+      birthRecord: {
+        date,
+        type: birthData.type || 'Normal',
+        lambCount: births.reduce((s, b) => s + (b.lambCount || 0), 0),
+        notes: ''
+      }
+    };
+    return { ...next, status: deriveRecordStatus(next) };
+  });
+
+  return { breedingRecords: updated, recordId: target.id };
+}
+
+/**
+ * Anacın açık kayıtlarını verilen durumla kapatır (örn. ölüm → LOST). Saf.
+ */
+export function closeDamInRecords(breedingRecords, damId, status = DAM_STATUS.LOST) {
+  return (breedingRecords || []).map(rec => {
+    if (!(rec.damIds || []).includes(damId) || !isOpenDamStatus(getDamStatus(rec, damId))) return rec;
+    const next = { ...rec, damStatus: { ...(rec.damStatus || {}), [damId]: status } };
+    return { ...next, status: deriveRecordStatus(next) };
+  });
+}
+
+/**
+ * Kapanan anaç/kayıtlara ait bekleyen gebelik takvimi görevlerini ayıklar. Saf.
+ * Bireysel görev → anacı kapandıysa; sürü (grup) görevi → kaydın tüm anaçları kapandıysa.
+ */
+export function pruneBreedingTasks(tasks, breedingRecords) {
+  const byId = new Map((breedingRecords || []).map(r => [r.id, r]));
+  return (tasks || []).filter(t => {
+    if (!t.breedingRecordId || t.status === 'completed') return true;
+    const rec = byId.get(t.breedingRecordId);
+    if (!rec) return true;
+    if (t.targetTag) return isOpenDamStatus(getDamStatus(rec, t.targetTag));
+    return (rec.damIds || []).some(id => isOpenDamStatus(getDamStatus(rec, id)));
+  });
+}
+
+function _updateDam(recordId, damId, updater) {
+  const state = getState();
+  const records = state.breedingRecords || [];
+  const rec = records.find(r => r.id === recordId);
+  if (!rec || !(rec.damIds || []).includes(damId)) return { success: false, message: 'Eşleşme kaydı bulunamadı.' };
+  return updater(state, rec);
+}
+
+/**
+ * Gebeliği doğrular (ultrason vb.): anaç PREGNANT olur, grubu 'Gebe'ye alınır.
+ */
+export function confirmPregnancy(recordId, damId) {
+  return _updateDam(recordId, damId, (state, rec) => {
+    if (getDamStatus(rec, damId) !== DAM_STATUS.ACTIVE) {
+      return { success: false, message: 'Bu anaç için doğrulanacak aktif bir katım yok.' };
+    }
+    const animals = [...(state.animals || [])];
+    const idx = animals.findIndex(a => a.id === damId);
+    const prevGroup = idx > -1 ? animals[idx].group : null;
+    if (idx > -1) animals[idx] = { ...animals[idx], group: 'Gebe' };
+
+    const breedingRecords = state.breedingRecords.map(r => {
+      if (r.id !== recordId) return r;
+      const next = {
+        ...r,
+        damStatus: { ...(r.damStatus || {}), [damId]: DAM_STATUS.PREGNANT },
+        damPrevGroup: { ...(r.damPrevGroup || {}), [damId]: prevGroup }
+      };
+      return { ...next, status: deriveRecordStatus(next) };
+    });
+
+    setState({ animals, breedingRecords });
+    return { success: true, message: `${damId} gebe olarak işaretlendi. Tahmini doğum: ${rec.milestones.expectedBirthDate}.` };
+  });
+}
+
+/**
+ * Gebeliğin tutmadığını işaretler: anaç FAILED olur, 'Gebe' grubuna alınmışsa eski grubuna döner,
+ * bu anaca ait bekleyen gebelik takvimi görevleri kaldırılır.
+ */
+export function markMatingFailed(recordId, damId) {
+  return _updateDam(recordId, damId, (state, rec) => {
+    if (!isOpenDamStatus(getDamStatus(rec, damId))) {
+      return { success: false, message: 'Bu anaç için açık bir katım yok.' };
+    }
+    const animals = [...(state.animals || [])];
+    const idx = animals.findIndex(a => a.id === damId);
+    if (idx > -1 && animals[idx].group === 'Gebe') {
+      animals[idx] = { ...animals[idx], group: rec.damPrevGroup?.[damId] || 'Boş' };
+    }
+
+    const breedingRecords = state.breedingRecords.map(r => {
+      if (r.id !== recordId) return r;
+      const next = { ...r, damStatus: { ...(r.damStatus || {}), [damId]: DAM_STATUS.FAILED } };
+      return { ...next, status: deriveRecordStatus(next) };
+    });
+
+    setState({ animals, breedingRecords, tasks: pruneBreedingTasks(state.tasks, breedingRecords) });
+    return { success: true, message: `${damId} için katım "tutmadı" olarak kaydedildi.` };
   });
 }
 

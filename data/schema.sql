@@ -125,6 +125,7 @@ declare
     v_email text := lower(coalesce(auth.jwt() ->> 'email', ''));
     v_legacy public.legacy_users%rowtype;
     v_new_key text;
+    v_legacy_payload jsonb := null;
 begin
     if v_uid is null then
         raise exception 'not authenticated';
@@ -142,11 +143,20 @@ begin
     v_new_key := 'shepherd_data_' || v_uid::text;
 
     if not exists (select 1 from public.farms_data where tenant_key = v_new_key) then
+        -- Yeni hesabın henüz bulut verisi yok: eski satır doğrudan yeni hesaba devredilir
         update public.farms_data
            set tenant_key = v_new_key,
                owner_id = v_uid
          where tenant_key = v_legacy.storage_key
            and owner_id is null;
+    else
+        -- Yeni hesapta zaten veri var: eski satır silinmez, sahipliği kullanıcıya verilir ve
+        -- yükü istemciye döndürülür; istemci kayıt bazında birleştirip yeni satıra yazar.
+        update public.farms_data
+           set owner_id = v_uid
+         where tenant_key = v_legacy.storage_key
+           and owner_id is null
+        returning farm_payload into v_legacy_payload;
     end if;
 
     delete from public.legacy_users where email = v_email;
@@ -156,7 +166,8 @@ begin
         'farmName', v_legacy.farm_name,
         'ownerName', v_legacy.owner_name,
         'role', v_legacy.role,
-        'legacyStorageKey', v_legacy.storage_key
+        'legacyStorageKey', v_legacy.storage_key,
+        'legacyPayload', v_legacy_payload
     );
 end;
 $$;

@@ -74,8 +74,9 @@ export function refreshCurrentRoute() {
 }
 
 function _isUserInteracting() {
-  const modalContainer = document.getElementById('custom-modal-container');
-  if (modalContainer && modalContainer.children.length > 0) return true;
+  // Ortak modal ve kendi kapsayıcısını kullanan eşleşme modalı
+  const modalRoots = ['custom-modal-container', 'breeding-modal-root'];
+  if (modalRoots.some(id => (document.getElementById(id)?.children.length || 0) > 0)) return true;
 
   const active = document.activeElement;
   const app = document.getElementById('app');

@@ -3,8 +3,9 @@
  * State-driven: tüm görevler state.tasks ve state.taskHistory üzerinden yönetilir.
  */
 
+import { todayIso, addDaysIso, normalizeDateInput } from './dateUtils.js';
 import { getState, setState } from './state.js';
-import { buildRecordFromCompletedTask, markCourseDoseCompleted } from './healthManager.js';
+import { buildRecordFromCompletedTask, markCourseDoseCompleted, computeStockDeduction } from './healthManager.js';
 
 /** Görev Türleri */
 export const TASK_TYPES = [
@@ -21,10 +22,11 @@ export const TASK_TYPES = [
  * Yoksa acil veya metin içinde geçen 'YYYY-MM-DD' tarihini yakalar, o da yoksa bugünün tarihini döner.
  */
 export function getTaskDueDate(task) {
-  if (task.dueDate) return task.dueDate;
+  const normalized = normalizeDateInput(task.dueDate);
+  if (normalized) return normalized;
   const match = ((task.desc || '') + ' ' + (task.title || '')).match(/\b(\d{4}-\d{2}-\d{2})\b/);
   if (match) return match[1];
-  return new Date().toISOString().split('T')[0];
+  return todayIso();
 }
 
 /**
@@ -33,8 +35,7 @@ export function getTaskDueDate(task) {
 export function isTaskOverdue(task) {
   if (task.status === 'completed') return false;
   const due = getTaskDueDate(task);
-  const today = new Date().toISOString().split('T')[0];
-  return due < today;
+  return due < todayIso();
 }
 
 /**
@@ -43,15 +44,9 @@ export function isTaskOverdue(task) {
  * @param {'week'|'month'|'all'} range 
  */
 export function filterTasksByTimeRange(tasks, range = 'week') {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const todayStr = today.toISOString().split('T')[0];
-
-  const weekEnd = new Date(today.getTime() + 7 * 86400000);
-  const weekEndStr = weekEnd.toISOString().split('T')[0];
-
-  const monthEnd = new Date(today.getTime() + 30 * 86400000);
-  const monthEndStr = monthEnd.toISOString().split('T')[0];
+  const todayStr = todayIso();
+  const weekEndStr = addDaysIso(todayStr, 7);
+  const monthEndStr = addDaysIso(todayStr, 30);
 
   let filtered = tasks.filter(t => {
     if (t.status === 'completed') return false;
@@ -151,9 +146,12 @@ let _taskSeq = 0;
  * @param {Object} taskData - { title, desc, type, prio, scope, targetTag, dueDate }
  */
 export function buildTask(taskData) {
-  const todayStr = new Date().toISOString().split('T')[0];
+  const todayStr = todayIso();
   _taskSeq = (_taskSeq + 1) % 100000;
+  // Bağlantı alanları (breedingRecordId, treatmentRecordId, …) korunur
+  const { title, desc, type, prio, scope, targetTag, dueDate, status, createdAt, id, ...links } = taskData;
   return {
+    ...links,
     id: `TSK-${Date.now()}-${_taskSeq}`,
     title: taskData.title,
     desc: taskData.desc || '',
@@ -161,9 +159,10 @@ export function buildTask(taskData) {
     prio: taskData.prio || 'Normal',
     scope: taskData.scope || 'herd',
     targetTag: taskData.targetTag || null,
-    dueDate: taskData.dueDate || todayStr,
+    // Geçersiz/serbest biçimli tarih ('15.12.2026' vb.) ISO'ya çevrilir; çevrilemezse bugün
+    dueDate: normalizeDateInput(taskData.dueDate) || todayStr,
     status: 'pending',
-    createdAt: new Date().toLocaleDateString('tr-TR', { day: '2-digit', month: 'short', year: 'numeric' })
+    createdAt: todayStr
   };
 }
 
@@ -193,10 +192,10 @@ export function completeTask(taskId) {
 
   if (idx === -1) return { success: false, message: 'Görev bulunamadı.' };
 
-  const todayIso = new Date().toISOString().split('T')[0];
+  const completedOn = todayIso();
   const task = { ...tasks[idx] };
   task.status = 'completed';
-  task.completedAt = new Date().toLocaleDateString('tr-TR', { day: '2-digit', month: 'short', year: 'numeric' });
+  task.completedAt = todayIso();
 
   // tasks dizisinden çıkar
   tasks.splice(idx, 1);
@@ -207,9 +206,19 @@ export function completeTask(taskId) {
   const update = { tasks, taskHistory: history };
 
   if (task.treatmentRecordId) {
+    // Kür dozu: aynı doz miktarı stoktan düşülür (stok yetmezse görev tamamlanmaz)
+    const record = (state.treatmentRecords || []).find(r => r.id === task.treatmentRecordId);
+    const doseQuantity = record ? (record.totalBatchQuantity ?? record.dosage) : null;
+    if (record?.medicationId && doseQuantity > 0) {
+      const deduction = computeStockDeduction(state.pharmacyStock, record.medicationId, doseQuantity);
+      if (!deduction.success) {
+        return { success: false, message: `${task.title}: ${deduction.message} Önce ecza deposuna stok ekleyin.` };
+      }
+      update.pharmacyStock = deduction.stock;
+    }
     update.treatmentRecords = markCourseDoseCompleted(state.treatmentRecords, task.treatmentRecordId, task.doseNumber);
   } else if (task.type === 'vaccine' || task.type === 'medicine') {
-    const record = buildRecordFromCompletedTask(task, state.animals, todayIso);
+    const record = buildRecordFromCompletedTask(task, state.animals, completedOn);
     update.treatmentRecords = [record, ...(state.treatmentRecords || [])];
   }
 

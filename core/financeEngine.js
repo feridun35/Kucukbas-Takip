@@ -1,98 +1,130 @@
 /**
  * ShepherdAI — Lojik Finans Motoru (Finance Engine)
  * ROI Hesaplamaları, Silo Takibi ve Ayıklama (Culling) Karar Algoritmaları.
+ *
+ * ── Veri İlkesi ──
+ * Hesaplar mümkün olduğunca kayıtlı veriden yapılır (ağırlık, doğum tarihi/ağırlığı, depodaki yem fiyatları,
+ * tedavi kayıtları). Kaydı tutulmayan kalemler data/finance-assumptions.js'deki varsayımlardan gelir ve
+ * sonuçta `assumptions` listesiyle açıkça bildirilir. Rastgele / uydurma değer üretilmez.
  */
 
 import { getAnimalById, getState } from './state.js';
-import { marketPrices } from '../data/mock-data.js';
+import { calculateAnimalDailyFeed, getAverageFeedPrice, calculateAverageDailyGain } from './herdMathEngine.js';
+import { recordTargetsAnimal } from './healthRecords.js';
+import { todayIso, daysBetweenIso, isValidIsoDate } from './dateUtils.js';
+import { MARKET_PRICES, FINANCE_ASSUMPTIONS } from '../data/finance-assumptions.js';
+
+const round = (n) => Math.round(n);
 
 /**
- * Tekil bir hayvanın güncel ROI'sini (Yatırım Getirisi) hesaplar.
- * @param {string} animalId - Hayvanın Küpe No (Örn: TR-102)
- * @returns {Object} { netValue, totalCost, profitLoss, roiPercentage, sparklineData }
+ * Tek hayvanın tahmini maliyet / değer analizi (saf hesap).
+ * @returns {{ netValue, totalCost, profitLoss, feedCost, vetCost, purchaseCost, daysInHerd, assumptions: string[] }}
+ */
+function _analyzeAnimal(animal, state, feedPrice) {
+  const assumptions = [];
+  const today = todayIso();
+  const weight = parseFloat(animal.weight) || 0;
+
+  // Değer: canlı ağırlık × piyasa fiyatı
+  const netValue = weight * MARKET_PRICES.meatLivePerKg;
+
+  // Alış maliyeti: girilmişse o, sürüde doğduysa 0, değilse varsayım
+  let purchaseCost;
+  if (animal.purchasePrice !== undefined && animal.purchasePrice !== null && animal.purchasePrice !== '') {
+    purchaseCost = parseFloat(animal.purchasePrice) || 0;
+  } else if (animal.mother) {
+    purchaseCost = 0;
+  } else {
+    purchaseCost = FINANCE_ASSUMPTIONS.purchasePrice;
+    assumptions.push(`alış fiyatı girilmemiş (${FINANCE_ASSUMPTIONS.purchasePrice} ₺ varsayıldı)`);
+  }
+
+  // Sürüde geçen gün: sürüde doğduysa doğumdan, değilse giriş tarihinden
+  const sinceDate = animal.mother && isValidIsoDate(animal.birthDate) ? animal.birthDate : animal.addedAt;
+  let daysInHerd = isValidIsoDate(sinceDate) ? Math.max(0, daysBetweenIso(sinceDate, today)) : null;
+  if (daysInHerd === null) {
+    daysInHerd = FINANCE_ASSUMPTIONS.defaultDaysInHerd;
+    assumptions.push(`sürüye giriş tarihi bilinmiyor (${FINANCE_ASSUMPTIONS.defaultDaysInHerd} gün varsayıldı)`);
+  }
+
+  // Yem maliyeti: bugünkü ağırlığa göre günlük tüketim × gün × ortalama yem fiyatı
+  const feedCost = calculateAnimalDailyFeed(animal).freshFeedKg * daysInHerd * feedPrice;
+
+  // Veteriner maliyeti: kayıtlı tedavi sayısı × birim varsayım
+  const treatmentCount = (state.treatmentRecords || []).filter(r => recordTargetsAnimal(r, animal.id)).length;
+  const vetCost = treatmentCount * FINANCE_ASSUMPTIONS.vetCostPerTreatment;
+  if (treatmentCount > 0) assumptions.push(`tedavi başına ${FINANCE_ASSUMPTIONS.vetCostPerTreatment} ₺`);
+
+  const totalCost = purchaseCost + feedCost + vetCost;
+  return {
+    netValue,
+    totalCost,
+    profitLoss: netValue - totalCost,
+    feedCost,
+    vetCost,
+    purchaseCost,
+    daysInHerd,
+    assumptions
+  };
+}
+
+/** Değer eğrisi: doğum ağırlığından bugünkü ağırlığa doğrusal (rastgele değil) */
+function _valueTrajectory(startValue, endValue, points = 7) {
+  return Array.from({ length: points }, (_, i) => startValue + (endValue - startValue) * (i / (points - 1)));
+}
+
+/**
+ * Tekil bir hayvanın (veya 'HERD' ile tüm sürünün) tahmini ROI'sini hesaplar.
+ * @param {string} animalId - Hayvanın Küpe No (Örn: TR-102) veya 'HERD'
+ * @returns {Object|null} { netValue, totalCost, profitLoss, roiPercentage, sparklineData, assumptions }
  */
 export function calculateAnimalROI(animalId) {
-  if (animalId === 'HERD') {
-    const animals = getState().animals || [];
-    if (animals.length === 0) {
-      return {
-        netValue: 0,
-        totalCost: 0,
-        profitLoss: 0,
-        roiPercentage: '0.00',
-        sparklineData: [0, 0, 0, 0, 0, 0, 0]
-      };
-    }
+  const state = getState();
+  const feedPrice = getAverageFeedPrice(state.feedInventory);
+  const feedAssumption = state.financeSummary?.feedPriceIsAssumed !== false
+    ? [`depoda fiyatlı yem yok (${MARKET_PRICES.feedPerKg} ₺/kg varsayıldı)`] : [];
 
-    let totalRevenue = 0;
-    let totalCost = 0;
-    
-    animals.forEach(animal => {
-      const totalFeedKg = animal.weight * 6; 
-      const purchasePrice = 2800;
-      const totalVetCost = 450;
-      const feedCost = totalFeedKg * marketPrices.feed.barley;
-      
-      totalCost += (purchasePrice + feedCost + totalVetCost);
-      
-      let revenue = animal.weight * marketPrices.meatLive; 
-      if (animal.group === 'Sağmal' || animal.group === 'Gebe') {
-        revenue += (animal.yieldScore * 2) * marketPrices.milk;
-      }
-      totalRevenue += revenue;
-    });
+  const animals = animalId === 'HERD'
+    ? (state.animals || [])
+    : [getAnimalById(animalId)].filter(Boolean);
+  if (animalId !== 'HERD' && animals.length === 0) return null;
 
-    const profitLoss = totalRevenue - totalCost;
-    const roiPercentage = ((profitLoss / totalCost) * 100).toFixed(2);
-    
-    const sparklineData = Array.from({length: 7}, (_, i) => {
-      return (totalCost * 0.8) + (totalRevenue - (totalCost * 0.8)) * (i / 6) + (Math.random() * 5000 - 2500);
-    });
-
-    return {
-      netValue: totalRevenue,
-      totalCost,
-      profitLoss,
-      roiPercentage,
-      sparklineData
-    };
+  if (animals.length === 0) {
+    return { netValue: 0, totalCost: 0, profitLoss: 0, roiPercentage: '0.00', sparklineData: [0, 0, 0, 0, 0, 0, 0], assumptions: [] };
   }
 
-  const animal = getAnimalById(animalId);
-  if (!animal) return null;
-
-  // Mock finansal değerler (Gerçekte DB'den gelecek: totalFeedKg, vetCost, vs.)
-  const totalFeedKg = animal.weight * 6; // Örnek hesapedilen yem tüketimi
-  const purchasePrice = 2800;
-  const totalVetCost = 450;
-  
-  // Maliyet Kalemleri
-  const totalFeedCost = totalFeedKg * marketPrices.feed.barley;
-  const totalCost = purchasePrice + totalFeedCost + totalVetCost;
-  
-  // Gelir Kalemleri
-  let totalRevenue = animal.weight * marketPrices.meatLive; 
-
-  
-  if (animal.group === 'Sağmal' || animal.group === 'Gebe') {
-    totalRevenue += (animal.yieldScore * 2) * marketPrices.milk; // Sütten elde edilen mock gelir
-  }
-  
-  const profitLoss = totalRevenue - totalCost;
-  const roiPercentage = ((profitLoss / totalCost) * 100).toFixed(2);
-  
-  // Örnek Sparkline Data (Son 7 aylık değer değişimi simulasyonu)
-  const sparklineData = Array.from({length: 7}, (_, i) => {
-    return purchasePrice + (totalRevenue - purchasePrice) * (i / 6) + (Math.random() * 500 - 250);
+  let netValue = 0, totalCost = 0, startValue = 0;
+  const assumptionSet = new Set(feedAssumption);
+  animals.forEach(a => {
+    const r = _analyzeAnimal(a, state, feedPrice);
+    netValue += r.netValue;
+    totalCost += r.totalCost;
+    startValue += (parseFloat(a.birthWeight) || 0) * MARKET_PRICES.meatLivePerKg;
+    r.assumptions.forEach(x => assumptionSet.add(animalId === 'HERD' ? x.replace(/\s*\(.*\)$/, '') : x));
   });
 
+  const profitLoss = netValue - totalCost;
   return {
-    netValue: totalRevenue,
-    totalCost,
-    profitLoss,
-    roiPercentage,
-    sparklineData
+    netValue: round(netValue),
+    totalCost: round(totalCost),
+    profitLoss: round(profitLoss),
+    roiPercentage: totalCost > 0 ? ((profitLoss / totalCost) * 100).toFixed(2) : '0.00',
+    sparklineData: _valueTrajectory(startValue || netValue * 0.1, netValue),
+    assumptions: [...assumptionSet, `değer: canlı ağırlık × ${MARKET_PRICES.meatLivePerKg} ₺/kg`]
   };
+}
+
+/**
+ * Bir hayvan grubunun baş başına günlük yem maliyeti (ODAK kartı için).
+ * @param {(animal) => boolean} filterFn
+ */
+export function calculateDailyFeedCostPerHead(filterFn = () => true) {
+  const state = getState();
+  const group = (state.animals || []).filter(filterFn);
+  if (group.length === 0) return null;
+  const price = getAverageFeedPrice(state.feedInventory);
+  const totalKg = group.reduce((s, a) => s + calculateAnimalDailyFeed(a).freshFeedKg, 0);
+  return { perHead: (totalKg * price) / group.length, headCount: group.length };
 }
 
 /**
@@ -103,13 +135,13 @@ export function calculateAnimalROI(animalId) {
  */
 export function calculateSiloDepletion(totalSiloKg, dailyConsumptionKg) {
   if (dailyConsumptionKg <= 0) return { daysLeft: 999, depletionDate: null, isLowStock: false };
-  
+
   const daysLeft = Math.floor(totalSiloKg / dailyConsumptionKg);
   const depletionDate = new Date();
   depletionDate.setDate(depletionDate.getDate() + daysLeft);
-  
+
   const isLowStock = daysLeft <= 7; // 7 günden azsa uyarı ver
-  
+
   return {
     daysLeft,
     depletionDate,
@@ -118,36 +150,45 @@ export function calculateSiloDepletion(totalSiloKg, dailyConsumptionKg) {
 }
 
 /**
- * Verimsiz hayvanları tespit edip Culling (Ayıklama) Listesi oluşturur.
- * Kriter: Yem tüketim maliyeti yüksek ama canlı ağırlık/süt artışı karlı seviyede olmayanlar.
- * @returns {Array} Ayıklama önerilen hayvanların listesi (Risk skoruna göre sıralı)
+ * Besi verimi düşük hayvanları tespit eder: günlük canlı ağırlık artışının değeri < günlük yem maliyeti.
+ * Yalnızca doğum tarihi + doğum ağırlığı + güncel ağırlığı kayıtlı hayvanlar değerlendirilebilir.
+ * Damızlık, gebe ve sağmal hayvanlar besi kriterine göre ayıklanmaz.
+ *
+ * @returns {Array} Ayıklama önerilenler (zarar büyükten küçüğe). Dizi üzerinde `insufficientData` sayısı da bulunur.
  */
 export function generateCullingList() {
-  const herdData = getState().animals;
-  if (!herdData || herdData.length === 0) return [];
-  
-  const analyzedHerd = herdData.map(animal => {
-    const dailyGrowthValue = (animal.yieldScore * 0.002) * 190; // mock kazanç
-    const dailyMilkValue = animal.group === 'Sağmal' ? (animal.yieldScore * 0.05) * 24 : 0; 
-    
-    const dailyRevenue = dailyGrowthValue + dailyMilkValue;
-    const feedCostPerDay = animal.weight * 0.25; // mock yem tüketim maliyeti
+  const state = getState();
+  const animals = state.animals || [];
+  const feedPrice = getAverageFeedPrice(state.feedInventory);
+  const excludedGroups = ['Damızlık', 'Gebe', 'Sağmal'];
+
+  let insufficientData = 0;
+  const analyzed = [];
+
+  animals.filter(a => !excludedGroups.includes(a.group)).forEach(animal => {
+    const adg = calculateAverageDailyGain(animal);
+    if (adg === null) { insufficientData++; return; }
+
+    const dailyRevenue = adg * MARKET_PRICES.meatLivePerKg;
+    const feedCostPerDay = calculateAnimalDailyFeed(animal).freshFeedKg * feedPrice;
     const dailyLoss = feedCostPerDay - dailyRevenue;
-    
-    // Sağlık durumu warning/danger ise skoru daha da kötüleştir
-    let healthPenalty = animal.status === 'danger' ? 20 : (animal.status === 'warning' ? 10 : 0);
-    let cullingScore = dailyLoss + healthPenalty;
-    
-    return {
+    const healthPenalty = animal.status === 'danger' ? 20 : (animal.status === 'warning' ? 10 : 0);
+    const treatmentCount = (state.treatmentRecords || []).filter(r => recordTargetsAnimal(r, animal.id)).length;
+
+    analyzed.push({
       ...animal,
+      adgGrams: Math.round(adg * 1000),
       dailyRevenue,
+      feedCostPerDay,
       dailyLoss,
-      cullingScore
-    };
+      treatmentCount,
+      cullingScore: dailyLoss + healthPenalty
+    });
   });
-  
-  // Sadece zarar ettirenleri (cullingScore > 0) filtrele ve en çok zarar ettireni en üste al
-  return analyzedHerd
+
+  const list = analyzed
     .filter(a => a.cullingScore > 0)
     .sort((a, b) => b.cullingScore - a.cullingScore);
+  list.insufficientData = insufficientData;
+  return list;
 }

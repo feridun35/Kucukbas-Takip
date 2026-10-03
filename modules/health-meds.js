@@ -5,10 +5,12 @@
  * tedavi geçmişi ve arınma takibini tek ekranda birleştirir.
  * Tüm iş mantığı core/healthManager.js'den çağrılır.
  */
+import { todayIso, daysBetweenIso } from '../core/dateUtils.js';
 import { showAlert, showFormModal, showSelect, showConfirm } from '../core/modal.js';
 import { getState, setState } from '../core/state.js';
 import {
   getAllMedications,
+  isOpenVialExpired,
   getAllQuarantinedAnimals,
   getAvailableStock,
   addPharmacyStock,
@@ -179,18 +181,15 @@ function _renderStockTab() {
     const medName = med?.name || s.medicationId;
     const pct = s.totalQuantity > 0 ? Math.round((s.remainingQuantity / s.totalQuantity) * 100) : 0;
     const isCritical = s.remainingQuantity <= (s.criticalThreshold || 20);
-    const isExpiringSoon = new Date(s.expiryDate) < new Date(now.getTime() + 90 * 24 * 60 * 60 * 1000);
-    const expiredAlready = new Date(s.expiryDate) <= now;
+    const isExpiringSoon = daysBetweenIso(todayIso(), s.expiryDate) < 90;
+    const expiredAlready = s.expiryDate < todayIso();
 
-    // Açık flakon raf ömrü kontrolü
+    // Açık flakon raf ömrü kontrolü (dolmuş şişe tedavide kullanılmaz)
     let shelfWarning = '';
-    if (s.openedDate && med?.openVialShelfLifeDays) {
-      const openDate = new Date(s.openedDate);
-      const shelfEnd = new Date(openDate);
-      shelfEnd.setDate(shelfEnd.getDate() + med.openVialShelfLifeDays);
-      if (shelfEnd <= now) {
-        shelfWarning = `<div style="font-size:0.65rem; color:var(--danger-red); margin-top:4px;">⏰ Açık flakon raf ömrü dolmuş!</div>`;
-      }
+    if (isOpenVialExpired(s, med)) {
+      shelfWarning = `<div style="font-size:0.65rem; color:var(--danger-red); margin-top:4px;">⏰ Açık flakon raf ömrü dolmuş — tedavide kullanılmıyor, zayi edin.</div>`;
+    } else if (s.openedDate) {
+      shelfWarning = `<div style="font-size:0.65rem; color:var(--text-muted); margin-top:4px;">Açılış: ${s.openedDate}${med?.openVialShelfLifeDays ? ` (raf ömrü ${med.openVialShelfLifeDays} gün)` : ''}</div>`;
     }
 
     const barColor = expiredAlready ? '#6b7280' : isCritical ? '#ef4444' : pct > 50 ? '#22c55e' : '#f59e0b';
@@ -279,18 +278,19 @@ function _renderHistoryTab() {
   }
 
   const items = records.slice(0, 20).map(r => {
-    const target = r.applicationType === 'single'
+    const target = r.targetLabel || (r.applicationType === 'single'
       ? r.animalId
-      : `Toplu (${r.batchTargets?.length || '?'} baş)`;
+      : `Toplu (${r.batchTargets?.length || '?'} baş)`);
+    const isVaccine = r.recordType === 'vaccine' || r.category === 'asi';
+    const doseText = (r.dosage !== null && r.dosage !== undefined) ? `${r.dosage} ${r.dosageUnit || ''}` : '';
+    const detail = [r.activeIngredient, doseText].filter(Boolean).join(' · ');
 
     return `
       <div class="glass-card" style="padding:12px 14px; margin-bottom:8px; border-left:4px solid var(--accent-purple);">
         <div style="display:flex; justify-content:space-between; align-items:flex-start;">
           <div>
-            <div style="font-weight:700; font-size:0.9rem; color:var(--text-primary);">💊 ${r.medicationName}</div>
-            <div style="font-size:0.7rem; color:var(--text-muted); margin-top:2px;">
-              ${r.activeIngredient || ''} · ${r.dosage} ${r.dosageUnit}
-            </div>
+            <div style="font-weight:700; font-size:0.9rem; color:var(--text-primary);">${isVaccine ? '💉' : '💊'} ${r.medicationName}</div>
+            ${detail ? `<div style="font-size:0.7rem; color:var(--text-muted); margin-top:2px;">${detail}</div>` : ''}
             <div style="font-size:0.7rem; color:var(--text-secondary); margin-top:4px;">
               Hedef: <strong>${target}</strong> · ${r.applicationDate}
             </div>
@@ -351,36 +351,33 @@ async function _showAddStockFlow() {
   const meds = getAllMedications();
   const medOpts = meds.map(m => ({
     value: m.id,
-    label: m.name,
+    label: `${m.name} (${m.unit || 'ml'})`,
     color: '#3b82f6',
     icon: '💊'
   }));
 
   const medSel = await showSelect('İlaç Seçin (Stok Eklenecek)', medOpts, '📦');
   if (!medSel) return;
+  const med = meds.find(m => m.id === medSel.value);
+  const unit = med?.unit || 'ml';
 
-  const form = await showFormModal(`Stok Girişi — ${medSel.label}`, [
+  const form = await showFormModal(`Stok Girişi — ${med?.name || medSel.label}`, [
     { id: 'batchNo', label: 'Parti / Lot Numarası', type: 'text', placeholder: 'Örn: LOT-2026E' },
-    { id: 'quantity', label: 'Miktar', type: 'number', placeholder: 'Örn: 100' },
-    { id: 'unit', label: 'Birim', type: 'select', options: ['ml', 'tablet', 'doz', 'adet'], value: 'ml' },
-    { id: 'criticalThreshold', label: 'Kritik Eşik (uyarı)', type: 'number', value: '20' },
-    { id: 'expiryDate', label: 'Son Kullanma Tarihi', type: 'date' }
+    { id: 'quantity', label: `Miktar (${unit})`, type: 'number', placeholder: 'Örn: 100' },
+    { id: 'criticalThreshold', label: `Kritik Eşik (${unit}, uyarı)`, type: 'number', value: '20' },
+    { id: 'expiryDate', label: 'Son Kullanma Tarihi (zorunlu)', type: 'date' }
   ], '📦');
+  if (!form) return;
 
-  if (!form || !form.quantity) return;
-
-  addPharmacyStock({
+  const result = addPharmacyStock({
     medicationId: medSel.value,
     batchNo: form.batchNo || `LOT-${Date.now()}`,
-    totalQuantity: parseFloat(form.quantity),
-    remainingQuantity: parseFloat(form.quantity),
-    unit: form.unit || 'ml',
-    criticalThreshold: parseInt(form.criticalThreshold) || 20,
-    expiryDate: form.expiryDate || '2027-12-31',
-    openedDate: null
+    totalQuantity: form.quantity,
+    criticalThreshold: parseInt(form.criticalThreshold, 10) || 20,
+    expiryDate: form.expiryDate
   });
 
-  await showAlert('Stok Eklendi', `${medSel.label} — ${form.quantity} ${form.unit || 'ml'} stoğa eklendi.`, '✅');
+  await showAlert(result.success ? 'Stok Eklendi' : 'Stok Eklenemedi', result.message, result.success ? '✅' : '⚠️');
 }
 
 async function _showAddMedicationFlow() {
@@ -389,31 +386,31 @@ async function _showAddMedicationFlow() {
     { id: 'name', label: 'İlaç Adı (Ticari)', type: 'text', placeholder: 'Örn: Terramycin LA' },
     { id: 'activeIngredient', label: 'Etken Madde', type: 'text', placeholder: 'Örn: Oksitetrasiklin' },
     { id: 'category', label: 'Kategori', type: 'select', options: catOpts },
-    { id: 'dosagePerKg', label: 'Dozaj (ml/kg)', type: 'number', placeholder: '0.1' },
-    { id: 'meatWithdrawalDays', label: 'Et Arınma (gün)', type: 'number', placeholder: '28' },
-    { id: 'milkWithdrawalDays', label: 'Süt Arınma (gün)', type: 'number', placeholder: '7' },
+    { id: 'dosagePerKg', label: 'Dozaj (ml/kg) — zorunlu', type: 'number', placeholder: 'Prospektüsteki değer, örn. 0.1' },
+    { id: 'meatWithdrawalDays', label: 'Et Arınma (gün) — zorunlu, yoksa 0', type: 'number', placeholder: 'Prospektüsteki değer' },
+    { id: 'milkWithdrawalDays', label: 'Süt Arınma (gün) — zorunlu, yoksa 0', type: 'number', placeholder: 'Prospektüsteki değer' },
     { id: 'courseDays', label: 'Kür Süresi (gün)', type: 'number', value: '1' }
   ], '📖');
 
   if (!form || !form.name) return;
 
-  addCustomMedication({
+  const result = addCustomMedication({
     id: `custom-${Date.now()}`,
     name: form.name,
     activeIngredient: form.activeIngredient || '',
     category: form.category || 'diger',
-    dosagePerKg: parseFloat(form.dosagePerKg) || 0.1,
+    dosagePerKg: form.dosagePerKg,
     unit: 'ml',
     adminRoute: 'im',
-    meatWithdrawalDays: parseInt(form.meatWithdrawalDays) || 0,
-    milkWithdrawalDays: parseInt(form.milkWithdrawalDays) || 0,
+    meatWithdrawalDays: form.meatWithdrawalDays,
+    milkWithdrawalDays: form.milkWithdrawalDays,
     contraindications: { pregnancyRisk: false, pregnancyWarning: '', sideEffects: [] },
-    treatmentCourse: { days: parseInt(form.courseDays) || 1, repeatIntervalHours: 24 },
+    treatmentCourse: { days: form.courseDays === '' ? 1 : form.courseDays, repeatIntervalHours: 24 },
     openVialShelfLifeDays: 28,
     notes: ''
   });
 
-  await showAlert('İlaç Eklendi', `${form.name} ilaç kütüphanesine eklendi.`, '✅');
+  await showAlert(result.success ? 'İlaç Eklendi' : 'İlaç Eklenemedi', result.message, result.success ? '✅' : '⚠️');
 }
 
 function _rerender() {

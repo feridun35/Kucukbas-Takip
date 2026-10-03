@@ -3,6 +3,7 @@
  * Ölen hayvanların geçmiş kayıtlarını tutar, ölüm nedenlerini ve finansal kayıpları analiz eder.
  */
 
+import { todayIso } from '../core/dateUtils.js';
 import { getState } from '../core/state.js';
 import { showAlert, showFormModal, showSelect } from '../core/modal.js';
 import { recordDeath, estimateLossFromWeight } from '../core/herdManager.js';
@@ -99,7 +100,7 @@ export function init() {
 
       const form = await showFormModal('Ölüm Kaydı Oluştur', [
         { id: 'tagID', label: 'Hayvan Küpe No', type: 'text', value: defaultTag, placeholder: 'Örn: TR-109' },
-        { id: 'deathDate', label: 'Ölüm Tarihi', type: 'date', value: new Date().toISOString().split('T')[0] },
+        { id: 'deathDate', label: 'Ölüm Tarihi', type: 'date', value: todayIso() },
         { id: 'reason', label: 'Ölüm Sebebi / Teşhis', type: 'select', options: DEATH_REASONS },
         { id: 'lastWeight', label: 'Son Canlı Ağırlık (kg)', type: 'number', value: defaultWeight, placeholder: 'Örn: 55' },
         { id: 'financialLoss', label: 'Tahmini Finansal Kayıp (₺)', type: 'number', value: defaultLoss, placeholder: 'Boş bırakılırsa ağırlıktan hesaplanır' },

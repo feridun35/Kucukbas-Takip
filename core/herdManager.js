@@ -7,12 +7,13 @@
  * bu fonksiyonları çağırır. Kayıt oluşturma, sürüden çıkarma, çapraz modül yazımları burada yapılır.
  */
 
+import { todayIso, toLocalIso, normalizeDateInput } from './dateUtils.js';
 import { getState, setState } from './state.js';
-import { recordBirth } from './breedingManager.js';
-import { marketPrices } from '../data/mock-data.js';
+import { applyBirthToRecords, closeDamInRecords, pruneBreedingTasks, normalizeParentId } from './breedingManager.js';
+import { getOpenDamMap } from './breedingStatus.js';
+import { MARKET_PRICES } from '../data/finance-assumptions.js';
 import { GOAT_BREED_KEYWORDS, GOAT_TYPES, GROUP_TO_FOCUS } from '../data/herd-constants.js';
 
-const todayIso = () => new Date().toISOString().split('T')[0];
 
 function _generateRfid() {
   return 'RFID-' + Math.floor(Math.random() * 90000 + 10000);
@@ -36,7 +37,7 @@ export function isTagInUse(tagId, animals = getState().animals) {
 /** Canlı ağırlıktan tahmini finansal kayıp (piyasa canlı kg fiyatı ile) */
 export function estimateLossFromWeight(weightKg) {
   const w = parseFloat(weightKg) || 0;
-  return Math.round(w * (marketPrices?.meatLive || 190));
+  return Math.round(w * MARKET_PRICES.meatLivePerKg);
 }
 
 /**
@@ -59,7 +60,7 @@ export function addAnimal(input) {
     if (!isNaN(ageMonths) && ageMonths >= 0) {
       const d = new Date();
       d.setMonth(d.getMonth() - ageMonths);
-      birthDate = d.toISOString().split('T')[0];
+      birthDate = toLocalIso(d);
     }
   }
 
@@ -86,9 +87,13 @@ export function addAnimal(input) {
     lastVaccine: '-',
     focus: GROUP_TO_FOCUS[group] || 'meat',
     birthDate,
-    mother: input.mother || 'Bilinmiyor',
-    father: input.father || 'Bilinmiyor'
+    // Bilinmeyen ebeveyn null saklanır (akrabalık kontrolü 'Bilinmiyor' metnini ortak ebeveyn sanmasın)
+    mother: normalizeParentId(input.mother),
+    father: normalizeParentId(input.father),
+    addedAt: todayIso()
   };
+  const purchasePrice = parseFloat(input.purchasePrice);
+  if (purchasePrice >= 0) animal.purchasePrice = purchasePrice;
 
   setState({ animals: [animal, ...(state.animals || [])], activeAnimalId: animal.id });
   return { success: true, message: `${animal.id} sürüye eklendi.`, animal };
@@ -163,8 +168,21 @@ export function recordDeath(input) {
     completedAt: deathDate
   };
 
+  // Ölen hayvanın bekleyen bireysel görevleri artık uygulanamaz
+  const cancelledTasks = (state.tasks || []).filter(t => t.scope === 'individual' && t.targetTag === tag);
+  if (cancelledTasks.length > 0) historyEntry.desc += ` ${cancelledTasks.length} bekleyen bireysel görev iptal edildi.`;
+
+  // Açık katım/gebelik kaydı varsa anaç LOST olarak kapanır
+  const breedingRecords = closeDamInRecords(state.breedingRecords, tag);
+  const tasks = pruneBreedingTasks(
+    (state.tasks || []).filter(t => !cancelledTasks.includes(t)),
+    breedingRecords
+  );
+
   const update = {
     animals,
+    tasks,
+    breedingRecords,
     mortalityRecords: [record, ...(state.mortalityRecords || [])],
     taskHistory: [historyEntry, ...(state.taskHistory || [])]
   };
@@ -198,7 +216,8 @@ export function registerBirth(motherId, input) {
     return { success: false, message: `${babyId} küpe numarası sürüde zaten kayıtlı.` };
   }
 
-  const birthDate = input.birthDate || todayIso();
+  const birthDate = normalizeDateInput(input.birthDate) || todayIso();
+  if (birthDate > todayIso()) return { success: false, message: 'Doğum tarihi ileri bir tarih olamaz.' };
   const birthWeight = parseFloat(input.birthWeight) || 3.5;
   const babyType = isGoat(mother) ? 'Oğlak' : 'Kuzu';
 
@@ -218,26 +237,26 @@ export function registerBirth(motherId, input) {
     focus: 'meat',
     birthDate,
     mother: mother.id,
-    father: input.fatherId || null
+    father: normalizeParentId(input.fatherId)
   };
 
   animals.unshift(baby);
 
-  // Ananın grubunu Gebe'den Sağmal'a güncelle
+  // Doğum yapan ana sağmal gruba geçer (gebe işaretliyse ya da açık katım kaydı varsa)
+  const hadOpenMating = getOpenDamMap(state.breedingRecords).has(motherId);
   const motherIdx = animals.findIndex(a => a.id === motherId);
-  if (motherIdx > -1 && animals[motherIdx].group === 'Gebe') {
+  if (motherIdx > -1 && (animals[motherIdx].group === 'Gebe' || hadOpenMating)) {
     animals[motherIdx] = { ...animals[motherIdx], group: 'Sağmal' };
   }
 
-  // Aktif eşleşme kaydı varsa doğumla kapat
-  let breedingRecords = [...(state.breedingRecords || [])];
-  const activeBreeding = breedingRecords.find(r =>
-    (r.status === 'ACTIVE' || r.status === 'PREGNANT') && r.damIds.includes(motherId)
-  );
-  if (activeBreeding) {
-    breedingRecords = recordBirth(activeBreeding.id, { date: birthDate, type: 'Normal', lambCount: 1 }, breedingRecords);
-  }
+  // Yalnızca bu ananın kaydı kapanır (grup katımında diğer anaçların takibi sürer); ikizler aynı doğuma eklenir
+  const { breedingRecords } = applyBirthToRecords(state.breedingRecords, motherId, {
+    date: birthDate,
+    babyId: baby.id,
+    type: input.birthType || 'Normal'
+  });
+  const tasks = pruneBreedingTasks(state.tasks, breedingRecords);
 
-  setState({ animals, breedingRecords });
+  setState({ animals, breedingRecords, tasks });
   return { success: true, message: `${baby.id} sürüye eklendi.`, baby };
 }

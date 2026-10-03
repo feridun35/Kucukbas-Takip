@@ -123,9 +123,11 @@ export async function openTreatmentModal(preselectedAnimalId = null) {
   const pregCheck = checkPregnancyRisk(selectedMed.id, selectedAnimals);
   if (pregCheck.hasRisk) {
     const pregNames = pregCheck.pregnantAnimals.map(a => a.id).join(', ');
+    const possibleNames = pregCheck.possiblyPregnantAnimals.map(a => a.id).join(', ');
     const proceed = await showConfirm(
       '🚨 GEBELİK UYARISI — KONTRENDİKASYON',
-      `DİKKAT: Aşağıdaki hayvan(lar) GEBEDİR:\n${pregNames}\n\n` +
+      (pregNames ? `DİKKAT: Aşağıdaki hayvan(lar) GEBEDİR:\n${pregNames}\n\n` : '') +
+      (possibleNames ? `Koç katımı yapılmış, gebeliği henüz doğrulanmamış (olası gebe):\n${possibleNames}\n\n` : '') +
       `${selectedMed.name} (${selectedMed.activeIngredient}):\n${pregCheck.warning}\n\n` +
       `Bu ilacı gebe hayvanlara uygulamak istediğinize emin misiniz?\nBu işlem kayıt altına alınacaktır.`,
       '🚨'
@@ -158,9 +160,22 @@ export async function openTreatmentModal(preselectedAnimalId = null) {
     recommendedDosage = stockInfo.total;
   }
 
+  const courseDays = selectedMed.treatmentCourse?.days || 1;
+  const courseNote = courseDays > 1 ? ` — her doz (${courseDays} günlük kür)` : '';
+
+  // Kür: tüm dozlar için stok yeterli mi? (sonraki dozlar görev tamamlanınca stoktan düşülür)
+  if (courseDays > 1 && recommendedDosage * courseDays > stockInfo.total) {
+    const cont = await showConfirm(
+      '⚠️ Kür İçin Stok Yetersiz',
+      `${courseDays} dozluk kür için toplam ${(recommendedDosage * courseDays).toFixed(1)} ${selectedMed.unit} gerekiyor, stokta ${stockInfo.total} ${stockInfo.unit} var.\n\nSonraki dozlardan önce stok eklemeniz gerekecek. Devam edilsin mi?`,
+      '⚠️'
+    );
+    if (!cont) return { applied: false };
+  }
+
   const doseFormLabel = applicationType === 'single'
-    ? `Önerilen Doz (${selectedMed.unit})`
-    : `Toplam Sürü Dozajı (${selectedMed.unit})${perHeadCalcStr}`;
+    ? `Önerilen Doz (${selectedMed.unit})${courseNote}`
+    : `Toplam Sürü Dozajı (${selectedMed.unit})${perHeadCalcStr}${courseNote}`;
 
   const doseForm = await showFormModal(`Dozaj Onayı — ${selectedMed.name}`, [
     { id: 'dosage', label: doseFormLabel, type: 'number', value: recommendedDosage, placeholder: dosageFormula },
@@ -169,7 +184,11 @@ export async function openTreatmentModal(preselectedAnimalId = null) {
 
   if (!doseForm) return { applied: false };
 
-  const finalDosage = parseFloat(doseForm.dosage) || recommendedDosage;
+  const finalDosage = parseFloat(doseForm.dosage);
+  if (isNaN(finalDosage) || finalDosage <= 0) {
+    await showAlert('Geçersiz Doz', 'Doz sıfırdan büyük bir sayı olmalıdır.', '⚠️');
+    return { applied: false };
+  }
 
   // ── 5. UYGULAMA ──
   const animalIds = selectedAnimals.map(a => a.id);

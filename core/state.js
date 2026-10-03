@@ -4,6 +4,7 @@
  * Her kiracının (tenant/hesap) verisi izole LocalStorage anahtarıyla saklanır.
  */
 
+import { todayIso, addDaysIso } from './dateUtils.js';
 import {
   mockHerdData,
   mockHealthData,
@@ -15,7 +16,8 @@ import {
 } from '../data/mock-data.js';
 import { syncHerdMathState } from './herdMathEngine.js';
 import { migrateTenantData, CURRENT_SCHEMA_VERSION } from './migrations.js';
-import { pushLocalStateToCloud, pullCloudStateToLocal, setCloudLoadDone, isCloudLoadDone, setSyncStatus, SYNC_STATUS } from './syncManager.js';
+import { mergeFarmPayloads } from './syncMerge.js';
+import { pushLocalStateToCloud, syncOnLoad, setCloudLoadDone, setSyncStatus, SYNC_STATUS } from './syncManager.js';
 
 // ── Anahtar Sınıfları ──
 // Hiçbir yere yazılmayan oturum anahtarları
@@ -223,11 +225,11 @@ export function getInitialDemoState() {
       }
     ],
     pharmacyStock: [
-      { id: 'PS-001', medicationId: 'primamycin-la', batchNo: 'LOT-2026A', totalQuantity: 100, remainingQuantity: 72, unit: 'ml', criticalThreshold: 20, expiryDate: '2027-06-15', openedDate: '2026-02-20' },
+      { id: 'PS-001', medicationId: 'primamycin-la', batchNo: 'LOT-2026A', totalQuantity: 100, remainingQuantity: 72, unit: 'ml', criticalThreshold: 20, expiryDate: '2027-06-15', openedDate: addDaysIso(todayIso(), -10) },
       { id: 'PS-002', medicationId: 'dectomax', batchNo: 'LOT-2026B', totalQuantity: 200, remainingQuantity: 145, unit: 'ml', criticalThreshold: 30, expiryDate: '2027-12-01', openedDate: null },
-      { id: 'PS-003', medicationId: 'ketogezik', batchNo: 'LOT-2025X', totalQuantity: 50, remainingQuantity: 12, unit: 'ml', criticalThreshold: 15, expiryDate: '2026-11-30', openedDate: '2026-03-01' },
+      { id: 'PS-003', medicationId: 'ketogezik', batchNo: 'LOT-2025X', totalQuantity: 50, remainingQuantity: 12, unit: 'ml', criticalThreshold: 15, expiryDate: addDaysIso(todayIso(), 60), openedDate: addDaysIso(todayIso(), -6) },
       { id: 'PS-004', medicationId: 'e-sevit', batchNo: 'LOT-2026C', totalQuantity: 100, remainingQuantity: 88, unit: 'ml', criticalThreshold: 20, expiryDate: '2027-09-20', openedDate: null },
-      { id: 'PS-005', medicationId: 'amoxylin-la', batchNo: 'LOT-2026D', totalQuantity: 100, remainingQuantity: 65, unit: 'ml', criticalThreshold: 25, expiryDate: '2027-03-10', openedDate: '2026-01-15' }
+      { id: 'PS-005', medicationId: 'amoxylin-la', batchNo: 'LOT-2026D', totalQuantity: 100, remainingQuantity: 65, unit: 'ml', criticalThreshold: 25, expiryDate: '2027-03-10', openedDate: addDaysIso(todayIso(), -3) }
     ],
     treatmentRecords: [
       {
@@ -260,14 +262,14 @@ export function getInitialDemoState() {
         type: 'INDIVIDUAL',
         sireIds: ['TR-210'],
         damIds: ['TR-102'],
-        startDate: new Date(Date.now() - 95 * 86400000).toISOString().split('T')[0],
+        startDate: addDaysIso(todayIso(), -95),
         endDate: null,
         status: 'PREGNANT',
         milestones: {
-          cycleCheckDate: new Date(Date.now() - 78 * 86400000).toISOString().split('T')[0],
-          ultrasoundDate: new Date(Date.now() - 50 * 86400000).toISOString().split('T')[0],
-          lateGestationDate: new Date(Date.now() + 20 * 86400000).toISOString().split('T')[0],
-          expectedBirthDate: new Date(Date.now() + 53 * 86400000).toISOString().split('T')[0]
+          cycleCheckDate: addDaysIso(todayIso(), -78),
+          ultrasoundDate: addDaysIso(todayIso(), -50),
+          lateGestationDate: addDaysIso(todayIso(), 20),
+          expectedBirthDate: addDaysIso(todayIso(), 53)
         },
         inbreedingWarning: null,
         birthRecord: null
@@ -277,17 +279,17 @@ export function getInitialDemoState() {
         type: 'GROUP',
         sireIds: ['TR-210'],
         damIds: ['TR-045', 'TR-088'],
-        startDate: new Date(Date.now() - 160 * 86400000).toISOString().split('T')[0],
-        endDate: new Date(Date.now() - 145 * 86400000).toISOString().split('T')[0],
+        startDate: addDaysIso(todayIso(), -160),
+        endDate: addDaysIso(todayIso(), -145),
         status: 'COMPLETED',
         milestones: {
-          cycleCheckDate: new Date(Date.now() - 143 * 86400000).toISOString().split('T')[0],
-          ultrasoundDate: new Date(Date.now() - 115 * 86400000).toISOString().split('T')[0],
-          lateGestationDate: new Date(Date.now() - 45 * 86400000).toISOString().split('T')[0],
-          expectedBirthDate: new Date(Date.now() - 12 * 86400000).toISOString().split('T')[0]
+          cycleCheckDate: addDaysIso(todayIso(), -143),
+          ultrasoundDate: addDaysIso(todayIso(), -115),
+          lateGestationDate: addDaysIso(todayIso(), -45),
+          expectedBirthDate: addDaysIso(todayIso(), -12)
         },
         inbreedingWarning: null,
-        birthRecord: { date: new Date(Date.now() - 10 * 86400000).toISOString().split('T')[0], type: 'Normal', lambCount: 2 }
+        birthRecord: { date: addDaysIso(todayIso(), -10), type: 'Normal', lambCount: 2 }
       }
     ]
   });
@@ -384,23 +386,8 @@ export function loadTenantState(user) {
     return;
   }
 
-  // Bulut Verisini Çek ve Eşitle (Arka planda asenkron)
-  pullCloudStateToLocal(user.storageKey).then(cloudPayload => {
-    // Bu arada kullanıcı değişmiş olabilir (çıkış / başka hesapla giriş)
-    if (AppState.currentTenantKey !== user.storageKey) return;
-
-    setCloudLoadDone(user.storageKey, true);
-    if (cloudPayload && typeof cloudPayload === 'object' && Object.keys(cloudPayload).length > 0) {
-      console.log('[State] ☁️ Buluttan gelen en güncel veri yerel state ile eşitleniyor...');
-      applyCloudState(cloudPayload);
-    } else {
-      // Bulutta kayıt yoksa mevcut yerel veriyi buluta gönder
-      _persistTenantState();
-    }
-  }).catch(err => {
-    console.error('[State] Cloud pull error:', err);
-    setCloudLoadDone(user.storageKey, true);
-  });
+  // Bulutla eşitle (arka planda). Gönderilmemiş yerel değişiklikler korunur; gerekirse birleştirilir.
+  syncOnLoad(user.storageKey);
 }
 
 /**
@@ -439,6 +426,22 @@ export function applyCloudState(cloudPayload) {
 }
 
 /**
+ * Dışarıdan gelen bir çiftlik yükünü (örn. eski hesabın verisi) mevcut çiftlikle KAYIT BAZINDA birleştirir.
+ * Hiçbir mevcut kayıt silinmez; aynı kimlikli kayıtta mevcut veri korunur. Sonuç normal yerel değişiklik
+ * gibi kaydedilir ve buluta gönderilir.
+ */
+export function importFarmData(payload) {
+  if (!payload || typeof payload !== 'object') return;
+  const merged = mergeFarmPayloads(null, getCloudPayload(), migrateTenantData(payload));
+  const update = {};
+  Object.keys(merged).forEach(k => {
+    if (SESSION_KEYS.includes(k) || DEVICE_LOCAL_KEYS.includes(k) || DERIVED_KEYS.includes(k)) return;
+    update[k] = merged[k];
+  });
+  setState(update);
+}
+
+/**
  * Yeni kiracı oluşturulduğunda temiz state başlatır
  * @param {Object} user 
  */
@@ -463,8 +466,9 @@ export function initNewTenantState(user) {
   }
 
   _notifySubscribers({ source: STATE_SOURCES.LOAD, keys: Object.keys(AppState) });
-  setCloudLoadDone(user.storageKey, true);
-  _persistTenantState();
+  setCloudLoadDone(user.storageKey, false);
+  // Bulutta kayıt yoksa bu boş çiftlik yazılır; varsa (örn. başka cihazdan) o alınır
+  syncOnLoad(user.storageKey);
 }
 
 /**
@@ -502,7 +506,7 @@ function _localPayload() {
 }
 
 /** Buluta gönderilecek yük: yalnızca çiftlik verisi (cihaz-yerel ve türetilmiş alanlar hariç) */
-function _cloudPayload() {
+export function getCloudPayload() {
   const data = {};
   Object.keys(AppState).forEach(key => {
     if (SESSION_KEYS.includes(key) || DEVICE_LOCAL_KEYS.includes(key) || DERIVED_KEYS.includes(key)) return;
@@ -518,9 +522,10 @@ function _persistTenantState(options = {}) {
   try {
     localStorage.setItem(tenantKey, JSON.stringify(_localPayload()));
 
-    // Demo hesabı, cihaz-yerel güncellemeler ve ilk bulut yüklemesi bitmeden yapılan yazımlar buluta gönderilmez
-    if (options.skipCloudPush !== true && !_isDemoUser(AppState.currentUser) && isCloudLoadDone(tenantKey)) {
-      pushLocalStateToCloud(tenantKey, _cloudPayload());
+    // Demo hesabı ve cihaz-yerel güncellemeler buluta gönderilmez. Diğer her değişiklik "kirli" işaretlenir;
+    // syncManager bulut eşitlemesi tamamlanınca / bağlantı gelince gönderir (veri kaybolmaz).
+    if (options.skipCloudPush !== true && !_isDemoUser(AppState.currentUser)) {
+      pushLocalStateToCloud(tenantKey);
     }
   } catch (e) {
     console.error('[State] Error persisting tenant state:', e);

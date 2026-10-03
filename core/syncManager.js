@@ -1,9 +1,15 @@
 /**
  * ShepherdAI — Supabase Bulut Senkronizasyon Servisi (syncManager.js)
  * Offline-First hibrit mimari:
- * 1. İlk bulut yüklemesi tamamlanana kadar bayat verilerin bulutu ezmesini önleyen kilit sistemi (isCloudLoadDone).
- * 2. Kiracı bazlı bağımsız debounce timers (Çakışma önleyici).
- * 3. Otomatik arka plan periyodik kontrolü & sekme odaklanma senkronizasyonu (PC & Mobil canlı eşitleme).
+ * 1. Değişiklik takibi: her yerel değişiklik kiracının senkron meta kaydını "kirli" (dirty) işaretler ve
+ *    revizyon sayacını artırır. Kirli veri, buluta başarıyla yazılana kadar asla buluttan ezilmez;
+ *    uygulama kapatılıp çevrimdışı/çevrimiçi yeniden açılsa bile.
+ * 2. Ortak taban (base): bulutla en son eşitlenen yük saklanır. Yerel ve bulut ayrıştığında
+ *    core/syncMerge.js ile kayıt bazında üç yönlü birleştirme yapılır (değişiklik kaybolmaz).
+ * 3. İyimser eşzamanlılık: güncelleme yalnızca bulut satırı en son görülen sürümdeyse (updated_at) yazılır;
+ *    arada başka cihaz yazdıysa önce birleştirilir, sonra tekrar denenir.
+ * 4. İlk bulut okuması başarısız olursa push yapılmaz (bayat yerel veri bulutu ezemez); okuma
+ *    çevrimiçi olunca / sekme odağında / periyodik kontrolde yeniden denenir.
  *
  * ── Güvenlik Modeli ──
  * Tüm istekler Supabase Auth oturumunun JWT'si ile yapılır. farms_data tablosundaki RLS politikaları
@@ -12,11 +18,17 @@
  * Kiracı anahtarı her zaman `shepherd_data_<auth.uid()>` biçimindedir.
  */
 
-import { getState, applyCloudState } from './state.js';
+import { getState, applyCloudState, getCloudPayload } from './state.js';
+import { migrateTenantData } from './migrations.js';
+import { mergeFarmPayloads } from './syncMerge.js';
 
 const SUPABASE_URL = 'https://wuugnytpkhmrazyrdrkb.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_8paErPGpe2zZ1N1wFOiOeg_aNLfom0o';
-const PENDING_SYNC_KEY = 'shepherd_pending_sync_queue';
+// Eski sürümün çevrimdışı kuyruğu (yalnızca göç için okunur)
+const LEGACY_PENDING_SYNC_KEY = 'shepherd_pending_sync_queue';
+const SYNC_META_PREFIX = 'shepherd_sync_meta_';
+const SYNC_BASE_PREFIX = 'shepherd_sync_base_';
+const MAX_PUSH_ATTEMPTS = 3;
 const TENANT_KEY_PREFIX = 'shepherd_data_';
 
 // Senkronizasyon Durumları
@@ -30,10 +42,11 @@ export const SYNC_STATUS = {
 
 let _supabaseClient = null;
 const _debounceTimers = new Map();
-const _pendingPayloads = new Map();
+const _pushInFlight = new Map();   // tenantKey → Promise
+const _pushQueued = new Set();
+const _loadInFlight = new Map();   // tenantKey → Promise
 let _currentStatus = navigator.onLine ? SYNC_STATUS.SYNCED : SYNC_STATUS.OFFLINE;
 const _statusSubscribers = new Set();
-let _lastCloudUpdatedAt = null;
 let _autoPollInterval = null;
 
 // Kiracı bulut yükleme tamamlandı kilit kümesi
@@ -135,247 +148,384 @@ export function setSyncStatus(status) {
   }
 }
 
-/** Kiracı için gönderilmeyi bekleyen yerel değişiklik var mı? */
-function _hasPendingPush(tenantKey) {
-  if (_debounceTimers.has(tenantKey)) return true;
+// ═══════════════════════════════════════════
+// Senkron meta kaydı (localStorage — kiracı bazlı)
+// ═══════════════════════════════════════════
+
+/** { dirty: bool, rev: number, cloudUpdatedAt: string|null } */
+export function getSyncMeta(tenantKey) {
   try {
-    const raw = localStorage.getItem(PENDING_SYNC_KEY);
-    return Boolean(raw && JSON.parse(raw).tenantKey === tenantKey);
+    const raw = localStorage.getItem(SYNC_META_PREFIX + tenantKey);
+    if (raw) return { dirty: false, rev: 0, cloudUpdatedAt: null, ...JSON.parse(raw) };
+  } catch (e) {}
+  return { dirty: false, rev: 0, cloudUpdatedAt: null };
+}
+
+function _saveMeta(tenantKey, meta) {
+  try { localStorage.setItem(SYNC_META_PREFIX + tenantKey, JSON.stringify(meta)); } catch (e) {}
+}
+
+function _getBase(tenantKey) {
+  try {
+    const raw = localStorage.getItem(SYNC_BASE_PREFIX + tenantKey);
+    return raw ? JSON.parse(raw) : null;
   } catch (e) {
-    return false;
+    return null;
   }
 }
 
-/**
- * Yerel state verisini Supabase bulutuna gecikmeli (debounced) olarak yollar
- * @param {string} tenantKey - Kiracı anahtarı
- * @param {Object} stateData - state yükü
- * @param {number} delayMs - Debounce süresi
- */
-export function pushLocalStateToCloud(tenantKey, stateData, delayMs = 1200) {
-  if (!tenantKey || !stateData) return;
+function _saveBase(tenantKey, payload) {
+  try { localStorage.setItem(SYNC_BASE_PREFIX + tenantKey, JSON.stringify(payload)); } catch (e) {}
+}
 
-  // İlk bulut verisi çekilmeden asla bayat yerel veriyi buluta yazma (Veri ezilmesini önler)
+/** Yerel değişikliği kaydeder: kirli işaretle, revizyonu artır */
+function _markLocalChange(tenantKey) {
+  const meta = getSyncMeta(tenantKey);
+  meta.dirty = true;
+  meta.rev = (meta.rev || 0) + 1;
+  _saveMeta(tenantKey, meta);
+}
+
+/** Eski sürümün çevrimdışı kuyruğu bu kiracıya aitse: veriyi kirli say, kuyruğu kaldır */
+function _adoptLegacyPendingQueue(tenantKey) {
+  try {
+    const raw = localStorage.getItem(LEGACY_PENDING_SYNC_KEY);
+    if (raw && JSON.parse(raw).tenantKey === tenantKey) {
+      _markLocalChange(tenantKey);
+      localStorage.removeItem(LEGACY_PENDING_SYNC_KEY);
+    }
+  } catch (e) {}
+}
+
+function _isCurrentTenant(tenantKey) {
+  const state = getState();
+  return state.currentTenantKey === tenantKey && !state.currentUser?.isDemo;
+}
+
+/** Bulut kaydını, yerel ile birleştirip uygular; yeni ortak taban buluttaki yük olur */
+function _reconcileWithCloud(tenantKey, remote) {
+  const cloud = migrateTenantData(remote.farm_payload || {});
+  const merged = mergeFarmPayloads(_getBase(tenantKey), getCloudPayload(), cloud);
+  applyCloudState(merged);
+  _saveBase(tenantKey, cloud);
+  const meta = getSyncMeta(tenantKey);
+  meta.cloudUpdatedAt = remote.updated_at;
+  _saveMeta(tenantKey, meta);
+}
+
+/** Bulut kaydını olduğu gibi uygular (yerelde gönderilmemiş değişiklik yokken) */
+function _adoptCloud(tenantKey, remote) {
+  applyCloudState(remote.farm_payload || {});
+  _saveBase(tenantKey, getCloudPayload());
+  const meta = getSyncMeta(tenantKey);
+  meta.cloudUpdatedAt = remote.updated_at;
+  _saveMeta(tenantKey, meta);
+}
+
+async function _fetchRemote(client, tenantKey, columns = 'farm_payload, updated_at') {
+  const { data, error } = await client
+    .from('farms_data')
+    .select(columns)
+    .eq('tenant_key', tenantKey)
+    .maybeSingle();
+  if (error) throw error;
+  return data || null;
+}
+
+/** Bulut senkronizasyonu için ön koşullar; sağlanmazsa null */
+async function _readyClient(tenantKey) {
+  if (!navigator.onLine) {
+    setSyncStatus(SYNC_STATUS.OFFLINE);
+    return null;
+  }
+  const client = getSupabaseClient();
+  if (!client) {
+    setSyncStatus(SYNC_STATUS.OFFLINE);
+    return null;
+  }
+  const session = await _getSession();
+  if (!_isOwnTenant(session, tenantKey)) {
+    setSyncStatus(SYNC_STATUS.ERROR);
+    return null;
+  }
+  return { client, session };
+}
+
+// ═══════════════════════════════════════════
+// Açılış eşitlemesi
+// ═══════════════════════════════════════════
+
+/**
+ * Kiracı yüklendiğinde bulutla eşitler. Başarılı olana kadar push yapılmaz.
+ * - Bulutta kayıt yok → yerel veri buluta yazılır.
+ * - Yerelde gönderilmemiş değişiklik yok → bulut verisi alınır.
+ * - Yerelde gönderilmemiş değişiklik var, bulut değişmemiş → yerel buluta yazılır.
+ * - İkisi de değişmiş → kayıt bazında birleştirilir, sonuç buluta yazılır.
+ * @returns {Promise<boolean>} eşitleme tamamlandı mı
+ */
+export function syncOnLoad(tenantKey) {
+  if (_loadInFlight.has(tenantKey)) return _loadInFlight.get(tenantKey);
+  const job = _syncOnLoad(tenantKey).finally(() => _loadInFlight.delete(tenantKey));
+  _loadInFlight.set(tenantKey, job);
+  return job;
+}
+
+async function _syncOnLoad(tenantKey) {
+  if (!tenantKey || !_isCurrentTenant(tenantKey)) return false;
+  _adoptLegacyPendingQueue(tenantKey);
+
+  const ready = await _readyClient(tenantKey);
+  if (!ready) return false;
+
+  setSyncStatus(SYNC_STATUS.SYNCING);
+  let remote;
+  try {
+    remote = await _fetchRemote(ready.client, tenantKey);
+  } catch (err) {
+    console.error('[SyncManager] Bulut okuması başarısız — push yapılmayacak, daha sonra tekrar denenecek:', err.message || err);
+    setSyncStatus(SYNC_STATUS.ERROR);
+    return false;
+  }
+
+  // Bu arada kullanıcı değişmiş olabilir
+  if (!_isCurrentTenant(tenantKey)) return false;
+
+  const meta = getSyncMeta(tenantKey);
+
+  if (!remote) {
+    setCloudLoadDone(tenantKey, true);
+    await _runPush(tenantKey);
+    return true;
+  }
+
+  if (!meta.dirty) {
+    _adoptCloud(tenantKey, remote);
+  } else if (remote.updated_at !== meta.cloudUpdatedAt) {
+    console.log('[SyncManager] 🔀 Yerel (gönderilmemiş) ve bulut değişiklikleri birleştiriliyor...');
+    _reconcileWithCloud(tenantKey, remote);
+  }
+
+  setCloudLoadDone(tenantKey, true);
+  if (getSyncMeta(tenantKey).dirty) {
+    await _runPush(tenantKey);
+  } else {
+    setSyncStatus(SYNC_STATUS.SYNCED);
+  }
+  return true;
+}
+
+// ═══════════════════════════════════════════
+// Push
+// ═══════════════════════════════════════════
+
+/**
+ * Yerel değişikliği kaydeder ve buluta gecikmeli (debounced) gönderimi planlar.
+ * Bulut eşitlemesi tamamlanmamışsa ya da çevrimdışıysa yalnızca "kirli" işaretlenir;
+ * gönderim eşitleme / bağlantı geri geldiğinde yapılır.
+ * @param {string} tenantKey
+ * @param {number} delayMs
+ */
+export function pushLocalStateToCloud(tenantKey, delayMs = 1200) {
+  if (!tenantKey) return;
+  _markLocalChange(tenantKey);
+
   if (!_cloudLoadDoneSet.has(tenantKey)) {
-    console.log(`[SyncManager] ⏳ '${tenantKey}' için ilk bulut eşitlemesi bekleniyor. Push ertelendi.`);
+    console.log(`[SyncManager] ⏳ '${tenantKey}' için bulut eşitlemesi bekleniyor. Değişiklik yerelde tutuluyor.`);
     return;
   }
 
   if (!navigator.onLine) {
-    _savePendingToLocalStorage(tenantKey, stateData);
     setSyncStatus(SYNC_STATUS.OFFLINE);
     return;
   }
 
   setSyncStatus(SYNC_STATUS.SYNCING);
+  _schedulePush(tenantKey, delayMs);
+}
 
-  if (_debounceTimers.has(tenantKey)) {
-    clearTimeout(_debounceTimers.get(tenantKey));
-  }
-  _pendingPayloads.set(tenantKey, stateData);
-
+function _schedulePush(tenantKey, delayMs) {
+  if (_debounceTimers.has(tenantKey)) clearTimeout(_debounceTimers.get(tenantKey));
   const timer = setTimeout(() => {
     _debounceTimers.delete(tenantKey);
-    const payload = _pendingPayloads.get(tenantKey);
-    _pendingPayloads.delete(tenantKey);
-    _executeCloudPush(tenantKey, payload);
+    _runPush(tenantKey);
   }, delayMs);
-
   _debounceTimers.set(tenantKey, timer);
 }
 
-/**
- * Debounce bekleyen tüm gönderimleri hemen yapar (örn. çıkış yapmadan önce).
- */
-export async function flushPendingPushes() {
-  const jobs = [];
-  _debounceTimers.forEach((timer, tenantKey) => {
-    clearTimeout(timer);
-    const payload = _pendingPayloads.get(tenantKey);
-    if (payload) jobs.push(_executeCloudPush(tenantKey, payload));
+/** Aynı kiracı için push'ları sıraya koyar (eşzamanlı iki push olmaz) */
+function _runPush(tenantKey) {
+  if (_pushInFlight.has(tenantKey)) {
+    _pushQueued.add(tenantKey);
+    return _pushInFlight.get(tenantKey);
+  }
+  const job = _pushWithRetry(tenantKey).finally(() => {
+    _pushInFlight.delete(tenantKey);
+    if (_pushQueued.delete(tenantKey) && getSyncMeta(tenantKey).dirty) _runPush(tenantKey);
   });
-  _debounceTimers.clear();
-  _pendingPayloads.clear();
-  await Promise.allSettled(jobs);
+  _pushInFlight.set(tenantKey, job);
+  return job;
+}
+
+async function _pushWithRetry(tenantKey) {
+  for (let attempt = 1; attempt <= MAX_PUSH_ATTEMPTS; attempt++) {
+    const result = await _pushOnce(tenantKey);
+    if (result !== 'conflict') return result === 'ok';
+    console.log(`[SyncManager] ↻ Bulut başka cihazdan değişti, birleştirilip tekrar deneniyor (${attempt}/${MAX_PUSH_ATTEMPTS}).`);
+  }
+  setSyncStatus(SYNC_STATUS.ERROR);
+  return false;
 }
 
 /**
- * Supabase upsert işlemi (oturum JWT'si ile; RLS sahiplik kontrolü sunucuda yapılır)
+ * Tek push denemesi. Dönüş: 'ok' | 'conflict' | 'skip' | 'error'
  */
-async function _executeCloudPush(tenantKey, stateData) {
-  if (!navigator.onLine) {
-    _savePendingToLocalStorage(tenantKey, stateData);
-    setSyncStatus(SYNC_STATUS.OFFLINE);
-    return false;
-  }
+async function _pushOnce(tenantKey) {
+  if (!_isCurrentTenant(tenantKey) || !_cloudLoadDoneSet.has(tenantKey)) return 'skip';
 
-  const client = getSupabaseClient();
-  const session = await _getSession();
-  if (!client || !session) {
-    // Oturum yok / istemci yüklenemedi — veri kaybolmasın diye kuyruğa al
-    _savePendingToLocalStorage(tenantKey, stateData);
-    setSyncStatus(SYNC_STATUS.ERROR);
-    return false;
-  }
-  if (!_isOwnTenant(session, tenantKey)) {
-    console.warn(`[SyncManager] '${tenantKey}' oturumdaki kullanıcıya ait değil; push atlandı.`);
-    return false;
-  }
-
-  try {
-    const { data, error } = await client
-      .from('farms_data')
-      .upsert({
-        tenant_key: tenantKey,
-        owner_id: session.user.id,
-        farm_payload: stateData
-      }, { onConflict: 'tenant_key' })
-      .select('updated_at')
-      .single();
-
-    if (error) {
-      console.error('[SyncManager] Supabase push hatası:', error.message || error);
-      _savePendingToLocalStorage(tenantKey, stateData);
-      setSyncStatus(SYNC_STATUS.ERROR);
-      return false;
-    }
-
-    // Sunucunun yazdığı zaman damgasını sakla — kendi yazdığımızı "başka cihazdan güncelleme" sanmayalım
-    _lastCloudUpdatedAt = data?.updated_at || _lastCloudUpdatedAt;
-    console.log(`[SyncManager] ☁️ Veriler Supabase'e başarıyla eşitlendi (${tenantKey}).`);
-    _clearPendingLocalStorage(tenantKey);
-    setSyncStatus(SYNC_STATUS.SYNCED);
-    return true;
-  } catch (err) {
-    console.error('[SyncManager] Push istisnası:', err);
-    _savePendingToLocalStorage(tenantKey, stateData);
-    setSyncStatus(SYNC_STATUS.ERROR);
-    return false;
-  }
-}
-
-/**
- * Supabase'den aktif kiracının en son verisini çeker
- */
-export async function pullCloudStateToLocal(tenantKey) {
-  if (!tenantKey) return null;
-
-  if (!navigator.onLine) {
-    setSyncStatus(SYNC_STATUS.OFFLINE);
-    return null;
-  }
-
-  const client = getSupabaseClient();
-  const session = await _getSession();
-  if (!client || !session || !_isOwnTenant(session, tenantKey)) {
-    setSyncStatus(client ? SYNC_STATUS.ERROR : SYNC_STATUS.OFFLINE);
-    return null;
-  }
+  const ready = await _readyClient(tenantKey);
+  if (!ready) return 'skip';
+  const { client, session } = ready;
 
   setSyncStatus(SYNC_STATUS.SYNCING);
+  const revAtStart = getSyncMeta(tenantKey).rev;
 
   try {
-    const { data, error } = await client
-      .from('farms_data')
-      .select('farm_payload, updated_at')
-      .eq('tenant_key', tenantKey)
-      .maybeSingle();
+    const remote = await _fetchRemote(client, tenantKey, 'updated_at');
+    const meta = getSyncMeta(tenantKey);
 
-    if (error) {
-      console.error('[SyncManager] Supabase pull hatası:', error.message || error);
-      setSyncStatus(SYNC_STATUS.ERROR);
-      return null;
+    if (remote && remote.updated_at !== meta.cloudUpdatedAt) {
+      // Başka cihaz yazmış: önce birleştir
+      const full = await _fetchRemote(client, tenantKey);
+      if (!_isCurrentTenant(tenantKey)) return 'skip';
+      if (full) _reconcileWithCloud(tenantKey, full);
+      return 'conflict';
     }
 
-    setSyncStatus(SYNC_STATUS.SYNCED);
-    if (data && data.farm_payload) {
-      _lastCloudUpdatedAt = data.updated_at;
-      console.log(`[SyncManager] ☁️ Buluttan veriler çekildi (Tarih: ${data.updated_at}).`);
-      return data.farm_payload;
+    const payload = getCloudPayload();
+    let newUpdatedAt;
+
+    if (remote) {
+      // İyimser eşzamanlılık: yalnızca en son gördüğümüz sürümün üzerine yaz
+      const { data, error } = await client
+        .from('farms_data')
+        .update({ farm_payload: payload })
+        .eq('tenant_key', tenantKey)
+        .eq('updated_at', remote.updated_at)
+        .select('updated_at');
+      if (error) throw error;
+      if (!data || data.length === 0) return 'conflict';
+      newUpdatedAt = data[0].updated_at;
+    } else {
+      const { data, error } = await client
+        .from('farms_data')
+        .insert({ tenant_key: tenantKey, owner_id: session.user.id, farm_payload: payload })
+        .select('updated_at')
+        .single();
+      if (error) {
+        if (error.code === '23505') return 'conflict'; // arada başka cihaz oluşturdu
+        throw error;
+      }
+      newUpdatedAt = data.updated_at;
     }
-    return null;
+
+    _saveBase(tenantKey, payload);
+    const after = getSyncMeta(tenantKey);
+    after.cloudUpdatedAt = newUpdatedAt;
+    // Push sürerken yeni yerel değişiklik olduysa kirli kalır ve tekrar gönderilir
+    after.dirty = after.rev !== revAtStart;
+    _saveMeta(tenantKey, after);
+
+    console.log(`[SyncManager] ☁️ Veriler Supabase'e başarıyla eşitlendi (${tenantKey}).`);
+    setSyncStatus(after.dirty ? SYNC_STATUS.SYNCING : SYNC_STATUS.SYNCED);
+    if (after.dirty) _pushQueued.add(tenantKey);
+    return 'ok';
   } catch (err) {
-    console.error('[SyncManager] Pull esnasında hata oluştu:', err);
+    console.error('[SyncManager] Supabase push hatası:', err.message || err);
     setSyncStatus(SYNC_STATUS.ERROR);
-    return null;
+    return 'error';
   }
 }
 
 /**
- * Diğer cihazlardan gelen canlı güncellemeleri kontrol eder
+ * Bekleyen gönderimleri hemen yapar (örn. çıkış yapmadan önce).
+ */
+export async function flushPendingPushes() {
+  const tenantKey = getState().currentTenantKey;
+  _debounceTimers.forEach(timer => clearTimeout(timer));
+  _debounceTimers.clear();
+  if (!tenantKey || !_cloudLoadDoneSet.has(tenantKey)) return;
+  if (_pushInFlight.has(tenantKey)) await _pushInFlight.get(tenantKey);
+  if (getSyncMeta(tenantKey).dirty) await _runPush(tenantKey);
+}
+
+// ═══════════════════════════════════════════
+// Canlı güncelleme kontrolü
+// ═══════════════════════════════════════════
+
+function _hasUnsentLocalChanges(tenantKey) {
+  return _debounceTimers.has(tenantKey) || _pushInFlight.has(tenantKey) || getSyncMeta(tenantKey).dirty;
+}
+
+/**
+ * Diğer cihazlardan gelen canlı güncellemeleri kontrol eder.
+ * Açılış eşitlemesi henüz başarılmadıysa onu yeniden dener.
  */
 export async function checkForCloudUpdates() {
   if (!navigator.onLine) return;
-  const state = getState();
-  const tenantKey = state.currentTenantKey;
-  if (!tenantKey || state.currentUser?.isDemo || !isCloudLoadDone(tenantKey)) return;
+  const tenantKey = getState().currentTenantKey;
+  if (!tenantKey || !_isCurrentTenant(tenantKey)) return;
 
-  // Gönderilmemiş yerel değişiklik varsa bulut verisi daha eskidir — ezme
-  if (_hasPendingPush(tenantKey)) return;
+  if (!_cloudLoadDoneSet.has(tenantKey)) {
+    await syncOnLoad(tenantKey);
+    return;
+  }
 
-  const client = getSupabaseClient();
-  const session = await _getSession();
-  if (!client || !_isOwnTenant(session, tenantKey)) return;
+  // Gönderilmemiş yerel değişiklik varsa push zaten birleştirerek yazacak
+  if (_hasUnsentLocalChanges(tenantKey)) {
+    if (!_pushInFlight.has(tenantKey) && !_debounceTimers.has(tenantKey)) _runPush(tenantKey);
+    return;
+  }
+
+  const ready = await _readyClient(tenantKey);
+  if (!ready) return;
 
   try {
-    const { data } = await client
-      .from('farms_data')
-      .select('farm_payload, updated_at')
-      .eq('tenant_key', tenantKey)
-      .maybeSingle();
-
-    // Sorgu sürerken kullanıcı yerel değişiklik yapmış olabilir
-    if (_hasPendingPush(tenantKey) || getState().currentTenantKey !== tenantKey) return;
-
-    if (data && data.updated_at && data.updated_at !== _lastCloudUpdatedAt) {
-      console.log('[SyncManager] 🔄 Diğer cihazdan yeni güncelleme algılandı! Ekran yenileniyor...');
-      _lastCloudUpdatedAt = data.updated_at;
-      if (data.farm_payload) {
-        applyCloudState(data.farm_payload);
-      }
+    const head = await _fetchRemote(ready.client, tenantKey, 'updated_at');
+    if (!head || head.updated_at === getSyncMeta(tenantKey).cloudUpdatedAt) {
+      setSyncStatus(SYNC_STATUS.SYNCED);
+      return;
     }
+    const remote = await _fetchRemote(ready.client, tenantKey);
+    // Sorgu sürerken yerel değişiklik olduysa ezme — push birleştirecek
+    if (!remote || !_isCurrentTenant(tenantKey) || _hasUnsentLocalChanges(tenantKey)) return;
+
+    console.log('[SyncManager] 🔄 Diğer cihazdan yeni güncelleme algılandı! Ekran yenileniyor...');
+    _adoptCloud(tenantKey, remote);
+    setSyncStatus(SYNC_STATUS.SYNCED);
   } catch (e) {
-    console.error('[SyncManager] Cloud update check hatası:', e);
+    console.error('[SyncManager] Cloud update check hatası:', e.message || e);
   }
 }
 
-function _savePendingToLocalStorage(tenantKey, stateData) {
-  try {
-    localStorage.setItem(PENDING_SYNC_KEY, JSON.stringify({
-      tenantKey,
-      stateData,
-      timestamp: Date.now()
-    }));
-  } catch (e) {}
-}
-
-function _clearPendingLocalStorage(tenantKey) {
-  try {
-    const raw = localStorage.getItem(PENDING_SYNC_KEY);
-    if (raw && JSON.parse(raw).tenantKey === tenantKey) {
-      localStorage.removeItem(PENDING_SYNC_KEY);
-    }
-  } catch (e) {}
-}
-
+/** Bağlantı geri geldiğinde: eşitleme yapılmadıysa yap, kirli veri varsa gönder */
 export function flushPendingQueue() {
-  if (!navigator.onLine) return;
-
-  try {
-    const pendingRaw = localStorage.getItem(PENDING_SYNC_KEY);
-    if (pendingRaw) {
-      const pending = JSON.parse(pendingRaw);
-      if (pending.tenantKey && pending.stateData && isCloudLoadDone(pending.tenantKey)) {
-        console.log('[SyncManager] 🚀 Çevrimdışı kuyruktaki veriler buluta gönderiliyor...');
-        pushLocalStateToCloud(pending.tenantKey, pending.stateData, 200);
-      }
-    } else if (getState().currentUser?.isDemo) {
-      setSyncStatus(SYNC_STATUS.LOCAL);
-    } else {
-      setSyncStatus(SYNC_STATUS.SYNCED);
-    }
-  } catch (e) {
-    console.error('[SyncManager] Flush kuyruk hatası:', e);
+  const state = getState();
+  const tenantKey = state.currentTenantKey;
+  if (!tenantKey) return;
+  if (state.currentUser?.isDemo) {
+    setSyncStatus(SYNC_STATUS.LOCAL);
+    return;
+  }
+  if (!navigator.onLine) {
+    setSyncStatus(SYNC_STATUS.OFFLINE);
+    return;
+  }
+  if (!_cloudLoadDoneSet.has(tenantKey)) {
+    syncOnLoad(tenantKey);
+  } else if (getSyncMeta(tenantKey).dirty) {
+    _runPush(tenantKey);
+  } else {
+    setSyncStatus(SYNC_STATUS.SYNCED);
   }
 }
 
@@ -385,7 +535,6 @@ export function flushPendingQueue() {
 export function initSyncManager() {
   window.addEventListener('online', () => {
     console.log('[SyncManager] 🌐 İnternet bağlantısı sağlandı.');
-    setSyncStatus(SYNC_STATUS.SYNCING);
     flushPendingQueue();
   });
 
@@ -415,10 +564,5 @@ export function initSyncManager() {
   }
 
   getSupabaseClient();
-
-  if (navigator.onLine) {
-    flushPendingQueue();
-  } else {
-    setSyncStatus(SYNC_STATUS.OFFLINE);
-  }
+  if (!navigator.onLine) setSyncStatus(SYNC_STATUS.OFFLINE);
 }

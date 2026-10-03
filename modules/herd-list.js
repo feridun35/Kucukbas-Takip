@@ -223,6 +223,7 @@ function _attachEvents() {
       { id: 'group', label: 'Grup', type: 'select', options: ANIMAL_GROUPS },
       { id: 'weight', label: 'Güncel Ağırlık (kg)', type: 'number', placeholder: 'Örn: 45' },
       { id: 'ageMonths', label: 'Yaş (ay olarak)', type: 'number', placeholder: 'Örn: 18' },
+      { id: 'purchasePrice', label: 'Alış Fiyatı (₺, opsiyonel — kârlılık hesabı için)', type: 'number', placeholder: 'Sürüde doğduysa boş bırakın' },
       { id: 'mother', label: 'Ana Küpe No', type: 'select', options: femaleOpts },
       { id: 'father', label: 'Baba Küpe No', type: 'select', options: maleOpts }
     ], '🐑');
