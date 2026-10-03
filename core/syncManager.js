@@ -181,6 +181,7 @@ export function describeSyncError(err) {
   if (code === 'CONFLICT_RETRIES') return out('conflict', 'Bulut kaydı art arda güncellenemedi (başka cihazla çakışma). Birkaç saniye sonra yeniden denenecek.');
   if (code === 'PGRST301' || code === 'PGRST303' || /jwt|token/i.test(msg)) return out('session', 'Bulut oturumunun süresi dolmuş. Çıkış yapıp yeniden giriş yapın.');
   if (code === '42501' || /row-level security|permission denied/i.test(msg)) return out('rls', 'Supabase erişim kuralı (RLS) bu işlemi reddetti. data/schema.sql dosyasının güncel hâli çalıştırılmamış olabilir.');
+  if (code === '42703' || code === 'PGRST204' || /column .* does not exist|could not find the .* column/i.test(msg)) return out('schema', 'Bulut veritabanı şeması eski (owner_id sütunu yok). Supabase SQL Editor\'da data/schema.sql dosyasının tamamını çalıştırın.');
   if (code === '42P01' || code === 'PGRST205' || /does not exist|could not find the table/i.test(msg)) return out('schema', 'Bulutta farms_data tablosu bulunamadı. Supabase SQL Editor\'da data/schema.sql dosyasını çalıştırın.');
   if (/failed to fetch|networkerror|load failed|network request failed/i.test(msg)) return out('network', 'Sunucuya ulaşılamadı. İnternet bağlantınızı ya da reklam/izleyici engelleyiciyi kontrol edin.');
   if (code === '413' || /payload too large|request entity too large/i.test(msg)) return out('size', 'Çiftlik verisi bulut sınırını aşıyor.');

@@ -184,3 +184,6 @@ $$;
 
 revoke all on function public.claim_legacy_farm(text) from public, anon;
 grant execute on function public.claim_legacy_farm(text) to authenticated;
+
+-- PostgREST şema önbelleğini yenile (yeni sütunlar API'de hemen görünsün)
+notify pgrst, 'reload schema';
