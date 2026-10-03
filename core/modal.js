@@ -4,6 +4,13 @@
  * Şık, cam efektli (glassmorphism) özel UI bileşenleriyle değiştirir.
  */
 
+import { escapeHtml } from './sanitize.js';
+
+// Kullanıcı verisi içerebilen tüm metinler kaçışlanır (HTML olarak yorumlanmaz)
+const _text = (v) => escapeHtml(v);
+// Mesajlardaki satır sonları korunur
+const _multiline = (v) => escapeHtml(v).replace(/\n/g, '<br>');
+
 // Modal kapsayıcısını DOM'da garantile
 function _ensureModalContainer() {
   let container = document.getElementById('custom-modal-container');
@@ -31,8 +38,8 @@ export function showAlert(title, message, icon = 'ℹ️') {
       <div class="c-modal-overlay active">
         <div class="c-modal-box">
           <div class="c-modal-icon">${icon}</div>
-          <h3 class="c-modal-title">${title}</h3>
-          <p class="c-modal-message">${message}</p>
+          <h3 class="c-modal-title">${_text(title)}</h3>
+          <p class="c-modal-message">${_multiline(message)}</p>
           <div class="c-modal-actions">
             <button class="btn-primary" id="btn-modal-ok">Tamam</button>
           </div>
@@ -70,8 +77,8 @@ export function showConfirm(title, message, icon = '❓') {
       <div class="c-modal-overlay active">
         <div class="c-modal-box">
           <div class="c-modal-icon">${icon}</div>
-          <h3 class="c-modal-title">${title}</h3>
-          <p class="c-modal-message">${message}</p>
+          <h3 class="c-modal-title">${_text(title)}</h3>
+          <p class="c-modal-message">${_multiline(message)}</p>
           <div class="c-modal-actions" style="display:flex; gap:12px;">
             <button class="btn-secondary" id="btn-modal-cancel" style="flex:1;">İptal</button>
             <button class="btn-primary" id="btn-modal-yes" style="flex:1;">Onayla</button>
@@ -112,8 +119,8 @@ export function showPrompt(title, message, inputType = 'text', icon = '✏️') 
       <div class="c-modal-overlay active">
         <div class="c-modal-box">
           <div class="c-modal-icon">${icon}</div>
-          <h3 class="c-modal-title">${title}</h3>
-          <p class="c-modal-message">${message}</p>
+          <h3 class="c-modal-title">${_text(title)}</h3>
+          <p class="c-modal-message">${_multiline(message)}</p>
           <input type="${inputType}" class="c-modal-input" id="c-modal-input-field" placeholder="Değer giriniz..."/>
           <div class="c-modal-actions" style="display:flex; gap:12px;">
             <button class="btn-secondary" id="btn-modal-cancel" style="flex:1;">İptal</button>
@@ -158,6 +165,9 @@ export function showFormModal(title, fields, icon = '📝') {
   return new Promise((resolve) => {
     const container = _ensureModalContainer();
     
+    // RFID tarama yalnızca küpe numarası alanı olan formlarda anlamlıdır
+    const hasTagField = fields.some(f => f.id === 'id' || f.id === 'tagID');
+
     const fieldsHTML = fields.map(f => {
       const val = f.value !== undefined && f.value !== null ? f.value : '';
       if (f.type === 'select') {
@@ -165,19 +175,19 @@ export function showFormModal(title, fields, icon = '📝') {
           const optVal = typeof o === 'object' ? o.value : o;
           const optLabel = typeof o === 'object' ? o.label : o;
           const isSelected = String(optVal) === String(val) ? 'selected' : '';
-          return `<option value="${optVal}" ${isSelected}>${optLabel}</option>`;
+          return `<option value="${escapeHtml(optVal)}" ${isSelected}>${_text(optLabel)}</option>`;
         }).join('');
         return `
           <div style="margin-bottom:12px; text-align:left;">
-            <label style="display:block; font-size:0.8rem; color:var(--text-secondary); margin-bottom:4px;">${f.label}</label>
+            <label style="display:block; font-size:0.8rem; color:var(--text-secondary); margin-bottom:4px;">${_text(f.label)}</label>
             <select id="form_${f.id}" class="c-modal-input" style="width:100%; border-radius:8px; padding:10px;">${opts}</select>
           </div>
         `;
       }
       return `
         <div style="margin-bottom:12px; text-align:left;">
-          <label style="display:block; font-size:0.8rem; color:var(--text-secondary); margin-bottom:4px;">${f.label}</label>
-          <input type="${f.type}" id="form_${f.id}" class="c-modal-input" value="${val}" placeholder="${f.placeholder || ''}"${f.min !== undefined ? ` min="${f.min}"` : ''}${f.max !== undefined ? ` max="${f.max}"` : ''}${f.step !== undefined ? ` step="${f.step}"` : ''} style="width:100%; border-radius:8px; padding:10px;"/>
+          <label style="display:block; font-size:0.8rem; color:var(--text-secondary); margin-bottom:4px;">${_text(f.label)}</label>
+          <input type="${f.type}" id="form_${f.id}" class="c-modal-input" value="${escapeHtml(val)}" placeholder="${escapeHtml(f.placeholder || '')}"${f.min !== undefined ? ` min="${f.min}"` : ''}${f.max !== undefined ? ` max="${f.max}"` : ''}${f.step !== undefined ? ` step="${f.step}"` : ''} style="width:100%; border-radius:8px; padding:10px;"/>
         </div>
       `;
     }).join('');
@@ -186,12 +196,12 @@ export function showFormModal(title, fields, icon = '📝') {
       <div class="c-modal-overlay active">
         <div class="c-modal-box" style="max-height:90vh; overflow-y:auto;">
           <div class="c-modal-icon">${icon}</div>
-          <h3 class="c-modal-title" style="margin-bottom:16px;">${title}</h3>
+          <h3 class="c-modal-title" style="margin-bottom:16px;">${_text(title)}</h3>
           
           <div style="margin-bottom:20px;">
-            <button class="btn-secondary" id="btn-scan-rfid" style="width:100%; margin-bottom:16px; font-size:0.85rem; padding:8px; border:1px dashed var(--accent-blue); color:var(--accent-blue); border-radius:8px;">
+            ${hasTagField ? `<button class="btn-secondary" id="btn-scan-rfid" style="width:100%; margin-bottom:16px; font-size:0.85rem; padding:8px; border:1px dashed var(--accent-blue); color:var(--accent-blue); border-radius:8px;">
               📡 RFID Tara (Simülasyon)
-            </button>
+            </button>` : ''}
             ${fieldsHTML}
           </div>
 
@@ -253,14 +263,14 @@ export function showSelect(title, options, icon = '📋') {
     const container = _ensureModalContainer();
 
     const optionsHTML = options.map(o => `
-      <button class="c-select-option" data-value="${o.value}" style="
+      <button class="c-select-option" data-value="${escapeHtml(o.value)}" style="
         display:flex; align-items:center; gap:10px; width:100%; padding:12px 16px;
         border:1px solid rgba(255,255,255,0.1); border-radius:12px; background:var(--glass-bg);
         color:var(--text-primary); cursor:pointer; font-size:0.95rem; font-weight:500;
         transition:0.2s; margin-bottom:8px; text-align:left;
         border-left:4px solid ${o.color || 'var(--accent-blue)'};">
         ${o.icon ? `<span style="font-size:1.2rem;">${o.icon}</span>` : ''}
-        <span>${o.label}</span>
+        <span>${_text(o.label)}</span>
       </button>
     `).join('');
 
@@ -268,7 +278,7 @@ export function showSelect(title, options, icon = '📋') {
       <div class="c-modal-overlay active">
         <div class="c-modal-box" style="max-height:85vh; overflow-y:auto;">
           <div class="c-modal-icon">${icon}</div>
-          <h3 class="c-modal-title" style="margin-bottom:16px;">${title}</h3>
+          <h3 class="c-modal-title" style="margin-bottom:16px;">${_text(title)}</h3>
           <div style="margin-bottom:8px;">
             ${optionsHTML}
           </div>

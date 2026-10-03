@@ -15,6 +15,7 @@
  * - Buluttaki eski çiftlik verisi `claim_legacy_farm` RPC'si ile (eski şifre doğrulanarak) devralınır.
  */
 
+import { stripTags, deepStripTags } from './sanitize.js';
 import { loadTenantState, clearTenantState, initNewTenantState, importFarmData } from './state.js';
 import { navigateTo } from './router.js';
 import { getSupabaseClient, tenantKeyForUserId, flushPendingPushes } from './syncManager.js';
@@ -66,8 +67,8 @@ function _profileFromSupabaseUser(sbUser, overrides = {}) {
   return {
     id: sbUser.id,
     email: sbUser.email,
-    farmName: overrides.farmName || meta.farmName || 'Çiftliğim',
-    ownerName: overrides.ownerName || meta.ownerName || sbUser.email,
+    farmName: stripTags(overrides.farmName || meta.farmName || '') || 'Çiftliğim',
+    ownerName: stripTags(overrides.ownerName || meta.ownerName || '') || sbUser.email,
     role: overrides.role || meta.role || 'owner',
     storageKey: tenantKeyForUserId(sbUser.id),
     isDemo: false,
@@ -264,8 +265,8 @@ export async function registerUser({ farmName, ownerName, email, password, role 
   return _registerWithSupabase(client, {
     email: cleanEmail,
     password: cleanPassword,
-    farmName: farmName.trim(),
-    ownerName: ownerName.trim(),
+    farmName: stripTags(farmName),
+    ownerName: stripTags(ownerName),
     role: role || 'owner'
   }, _findLegacyUser(cleanEmail, claimPassword), claimPassword);
 }
@@ -409,7 +410,7 @@ export function updateCurrentUser(updatedFields) {
 
   // Kimlik ve depolama alanları değiştirilemez
   const { id, email, storageKey, isDemo, ...safeFields } = updatedFields || {};
-  const updatedUser = { ...current, ...safeFields };
+  const updatedUser = { ...current, ...deepStripTags(safeFields) };
   _setCurrentUser(updatedUser);
 
   if (!current.isDemo) {

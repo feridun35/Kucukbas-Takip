@@ -4,6 +4,8 @@
  * UI (finance-silo.js) yalnızca form toplar ve bu fonksiyonları çağırır.
  */
 
+import { todayIso } from './dateUtils.js';
+import { stripTags } from './sanitize.js';
 import { getState, setState } from './state.js';
 import { FEED_CATALOG } from '../data/feed-catalog.js';
 
@@ -74,7 +76,7 @@ export function addFeedStock({ feedId, amount, unitPrice, note }) {
     totalPrice,
     type: 'entry',
     date: _historyDate(),
-    note: note ? `${note} (${price} ₺/${cat.unit})` : `${price} ₺/${cat.unit}`
+    note: note ? `${stripTags(note)} (${price} ₺/${cat.unit})` : `${price} ₺/${cat.unit}`
   }, ...(state.feedHistory || [])];
 
   setState({ feedInventory, feedHistory });
@@ -85,10 +87,22 @@ export function addFeedStock({ feedId, amount, unitPrice, note }) {
   };
 }
 
+const DAILY_FEED_NOTE = 'Günlük Sürü Yemlemesi Düşüşü';
+
+/** Bugün günlük sürü yemlemesi zaten düşüldü mü? */
+export function isDailyFeedDeductedToday() {
+  const today = todayIso();
+  return (getState().feedHistory || []).some(h => h.isoDate === today && h.note === DAILY_FEED_NOTE);
+}
+
 /**
  * Sürünün günlük hesaplanan yem tüketimini kg cinsinden yemlerden orantılı düşer.
+ * Aynı gün ikinci kez çağrılırsa `{ force: true }` verilmedikçe düşüş yapılmaz (çift düşüşü önler).
  */
-export function deductDailyHerdFeed() {
+export function deductDailyHerdFeed({ force = false } = {}) {
+  if (!force && isDailyFeedDeductedToday()) {
+    return { success: false, reason: 'already-today', message: 'Bugünün sürü yemlemesi zaten stoktan düşüldü.' };
+  }
   const state = getState();
   const dailyConsumption = state.financeSummary?.dailyFeedKg || 0;
   if (dailyConsumption <= 0) {
@@ -120,7 +134,8 @@ export function deductDailyHerdFeed() {
       totalPrice: actualDeduct * (f.unitPrice || 0),
       type: 'deduction',
       date,
-      note: 'Günlük Sürü Yemlemesi Düşüşü'
+      isoDate: todayIso(),
+      note: DAILY_FEED_NOTE
     });
   });
 
@@ -154,7 +169,7 @@ export function deductFeed({ feedId, amount, reason, note }) {
     totalPrice: deductAmt * (target.unitPrice || 0),
     type: 'deduction',
     date: _historyDate(),
-    note: `${reason || 'Yem Çıkışı'} ${note ? '· ' + note : ''}`
+    note: stripTags(`${reason || 'Yem Çıkışı'} ${note ? '· ' + note : ''}`)
   }, ...(state.feedHistory || [])];
 
   setState({ feedInventory, feedHistory });

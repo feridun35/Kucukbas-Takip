@@ -1011,8 +1011,8 @@ function _rerender() {
 // ── Helpers ──
 
 function _getMedCategoryIcon(category, name) {
-  const cat = (category || '').toLowerCase();
-  const n = (name || '').toLowerCase();
+  const cat = (category || '').toLocaleLowerCase('tr-TR');
+  const n = (name || '').toLocaleLowerCase('tr-TR');
   if (cat.includes('aşı') || n.includes('aşı') || n.includes('karma') || n.includes('vaccine')) {
     return '💉';
   }

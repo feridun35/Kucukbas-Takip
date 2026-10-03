@@ -2,7 +2,7 @@
  * ShepherdAI — Depo & Silo Yönetimi (Kapsamlı Yem Envanter & Fiyat Takibi)
  */
 import { calculateSiloDepletion } from '../core/financeEngine.js';
-import { showAlert, showSelect, showFormModal } from '../core/modal.js';
+import { showAlert, showSelect, showFormModal, showConfirm } from '../core/modal.js';
 import { getState } from '../core/state.js';
 import {
   getFeedCatalog,
@@ -142,7 +142,12 @@ export function init() {
       if (!choice) return;
 
       if (choice.value === 'AUTO_DAILY') {
-        const result = deductDailyHerdFeed();
+        let result = deductDailyHerdFeed();
+        if (result.reason === 'already-today') {
+          const again = await showConfirm('Bugün Zaten Düşüldü', `${result.message}\n\nYine de bir günlük tüketimi (${dailyConsumption} kg) tekrar düşmek istiyor musunuz?`, '⚠️');
+          if (!again) return;
+          result = deductDailyHerdFeed({ force: true });
+        }
         if (!result.success) {
           showAlert(result.reason === 'empty-herd' ? 'Sürü Boş' : 'Stok Yetersiz', result.message, '⚠️');
           return;

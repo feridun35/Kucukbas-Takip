@@ -123,6 +123,7 @@ Saf modüller state'e bağımlı değildir; hem her `setState`'te çalışan `he
 - `healthRecords.js` — arınma hesabı, karantina listesi, aşı ajandası
 - `breedingStatus.js` — anaç bazında gebelik durumu, gebe hayvan listesi
 - `syncMerge.js` — üç yönlü kayıt bazında birleştirme
+- `sanitize.js` — HTML kaçışlama (`escapeHtml`), serbest metin temizleme (`stripTags`), küpe no karakter kuralı (`isValidTag`)
 - `dateUtils.js` — yerel saat dilimine göre takvim tarihi (`todayIso`, `addDaysIso`, `daysBetweenIso`). `toISOString()` UTC verdiği için gün hesabında kullanılmaz.
 
 **Döngüsel bağımlılık yok.** İki eski döngü bağımlılık ters çevrilerek kırıldı:
@@ -177,11 +178,11 @@ Router koruması: oturum yoksa her rota `#auth`'a, oturum varken `#auth` → `#d
 
 ## 4. Veri Katmanı: AppState
 
-### 4.1 State şeması (`core/state.js` → `EMPTY_STATE_TEMPLATE`, şema v3)
+### 4.1 State şeması (`core/state.js` → `EMPTY_STATE_TEMPLATE`, şema v4)
 
 ```
 AppState
-├── schemaVersion: 3                      ← core/migrations.js
+├── schemaVersion: 4                      ← core/migrations.js
 ├── Oturum anahtarları (hiçbir yere yazılmaz)
 │   └── currentPage, currentUser, currentTenantKey
 ├── Cihaz-yerel anahtarlar (localStorage'a yazılır, buluta GİTMEZ, buluttan EZİLMEZ)
@@ -195,7 +196,7 @@ AppState
 │   ├── breedingRecords[]
 │   ├── feedInventory[], feedHistory[]
 │   ├── mortalityRecords[]
-│   └── alerts[]             ← yalnızca demo verisinden gelir, yazan kod yok
+│   └── alerts[]             ← kullanılmıyor; bildirimler core/alertsEngine.js ile kayıtlı veriden üretilir
 └── Türetilmiş özetler (her setState'te yeniden hesaplanır, buluta gitmez)
     ├── herdSummary      ← calculateHerdSummaryStats(animals)
     ├── healthSummary    ← calculateHealthSummaryStats(animals, treatmentRecords, tasks)
@@ -415,3 +416,25 @@ Bildirimler `{ source, keys }` meta bilgisi taşır: `local`, `cloud`, `load`, `
 **Demo verisi sızıntısı.** Hayvan profili eksik alanları artık demo verisiyle doldurmuyor; eksik alan "—" ya da "Bilinmiyor" görünüyor.
 - Yaşı bilinmeyen hayvanda "NaNY NaNA" yerine "Bilinmiyor" yazıyor.
 - `mock-data.js` yalnızca demo tohum verisini içeriyor; kullanılmayan 7 sahte veri kaldırıldı.
+
+### Çözülenler (4. tur: genel hata taraması)
+
+| Hata | Çözüm |
+|---|---|
+| Aynı hesap iki sekmede açıkken bir sekmenin değişikliği diğerininkini siliyordu | `storage` olayıyla sekmeler arası bellek eşitleme; başka sekmede çıkış/giriş olursa sayfa yenilenir |
+| Lakap/not gibi alanlara yazılan HTML çalışıyordu (XSS), tırnak işareti formları bozuyordu | Girişte `<` `>` temizleme + küpe no karakter kuralı, modal bileşeninde tam kaçışlama, v4 göçü ile eski veri temizliği |
+| "Akıllı Asistan" gerçek hesaplarda sorun olsa da hep "Her şey yolunda" diyordu, demoda sabit sahte bildirimler vardı | `alertsEngine.js`: hasta hayvan, gecikmiş görev, gecikmiş doğum, kritik/süresi dolmuş ilaç, yem stoğu, yaklaşan doğum, arınma, sensör eşikleri |
+| Zil simgesindeki kırmızı nokta hep yanıyordu | Yalnızca bildirim varken görünür |
+| Girişte sensör paneli 60 sn "bağlantı yok" gösteriyordu | Oturum yüklenince sensör durumu hemen güncellenir |
+| Günlük sürü yemlemesi aynı gün iki kez düşülebiliyordu | Aynı gün ikinci düşüşte onay istenir |
+| Türkçe büyük harfli lakap/küpe aramada bulunamıyordu (`İnci` → `inci`) | `toLocaleLowerCase('tr-TR')` |
+| Profilde "tarama hızı 5 sn olarak ayarlandı" deniyor ama hiçbir şey değişmiyordu | Gerçek durum bildiriliyor (ESP32 bağlantısı yok) |
+| RFID tarama (simülasyon) düğmesi küpe alanı olmayan formlarda da çıkıyordu | Yalnızca küpe no alanı olan formlarda |
+
+### Bilinen sınırlamalar / henüz yapılmamış özellikler
+
+- **Hayvan satışı kaydı yok.** Hayvan profili ve ROI'deki "Hızlı Satış" yalnızca bilgi mesajı gösteriyor; hayvan sürüden çıkmıyor, satış geliri kaydedilmiyor.
+- **Henüz çalışmayan düğmeler.** "Hastalık / Belirti Kaydet", "AI Bireysel Teşhis" (profil) ve "Pasaportu Paylaş" yalnızca bilgi mesajı gösteriyor. Yapay zeka teşhis sayfasının sonucu bir hayvana bağlanmıyor ve kaydedilmiyor.
+- **Rol yetkisi yok.** "Sahip / Çoban" seçimi yalnızca görünümü değiştiriyor; aynı hesapla herkes her işlemi yapabiliyor.
+- **Senkron yükü büyüyor.** Çiftlik verisi bulutta tek JSON satırı olarak tutuluyor ve her değişiklikte tamamı gönderiliyor. Örneğin 1500 hayvanda bu yaklaşık 0.5 MB eder. Yem geçmişi gibi listeler zamanla büyüdükçe bu boyut da artar.
+
