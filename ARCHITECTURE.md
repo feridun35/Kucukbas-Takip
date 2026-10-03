@@ -124,6 +124,7 @@ Saf modüller state'e bağımlı değildir; hem her `setState`'te çalışan `he
 - `breedingStatus.js` — anaç bazında gebelik durumu, gebe hayvan listesi
 - `syncMerge.js` — üç yönlü kayıt bazında birleştirme
 - `observationRecords.js` — belirtiden hayvan durumu türetme, salgın şüphesi, ihbarı zorunlu belirti birlikteliği, uzun süre açık kalan belirtiler
+- `performanceIndex.js` — kayıtlı verilerden damızlık skoru (büyüme, gebe kalma, batında yavru, yavru yaşatma, yavru büyümesi, hastalık direnci, ana-baba) ve beklenen yavru skoru
 - `sanitize.js` — HTML kaçışlama (`escapeHtml`), serbest metin temizleme (`stripTags`), küpe no karakter kuralı (`isValidTag`)
 - `dateUtils.js` — yerel saat dilimine göre takvim tarihi (`todayIso`, `addDaysIso`, `daysBetweenIso`). `toISOString()` UTC verdiği için gün hesabında kullanılmaz.
 
@@ -190,7 +191,7 @@ AppState
 │   └── activeAnimalId, userRole, sensors
 ├── Çiftlik verisi (localStorage + bulut)
 │   ├── focusMode
-│   ├── animals[]            ← status = yalnızca klinik durum ('good'|'warning'|'danger')
+│   ├── animals[]            ← status = yalnızca klinik durum ('good'|'warning'|'danger'); weightHistory[] = tarihli tartımlar
 │   ├── treatmentRecords[]   ← TEK sağlık kaynağı: ilaç + aşı (recordType: 'treatment'|'vaccine')
 │   ├── pharmacyStock[], customMedications[]
 │   ├── tasks[], taskHistory[]   ← bekleyen aşılar = tasks (type: 'vaccine')
@@ -358,7 +359,7 @@ Bildirimler `{ source, keys }` meta bilgisi taşır: `local`, `cloud`, `load`, `
 | `herdManager` | `addAnimal` (küpe tekilliği), `updateAnimal`, `registerBirth`, `recordDeath`, kayıp tahmini | Önceden UI'da dağınık olan sürü yaşam döngüsü. |
 | `feedManager` | Yem girişi (ağırlıklı ortalama fiyat), günlük sürü yemlemesi, manuel çıkış, rasyon | Önceden `finance-silo.js` içindeydi. |
 | `herdMathEngine` | `syncHerdMathState`, yem DMI hesabı, `parseDate` (TR tarih ayrıştırma) | Her `setState`'te çalışır. |
-| `breedingManager` | Gebelik kilometre taşları, akrabalık riski, eşleştirme kaydı, görev üretimi, doğum kaydı, uyum skoru | Saf fonksiyonlar. |
+| `breedingManager` | Gebelik kilometre taşları, akrabalık riski, eşleştirme kaydı, görev üretimi, doğum kaydı, beklenen yavru skoru (`performanceIndex`) | Saf fonksiyonlar. |
 | `workforceManager` | Görev CRUD, tarih filtreleme/sıralama, tamamlama → geçmiş + sağlık kaydı | `completeTask` → `treatmentRecords`. |
 | `financeEngine` | Hayvan/sürü ROI, silo tükenme, ayıklama listesi | Sabit/mock değerler ve `Math.random()` sparkline. |
 | `migrations` | `migrateTenantData` (v1 → v2) | Yükleme ve bulut uygulamasında çalışır. |
@@ -463,4 +464,36 @@ flowchart LR
 | Uzun süre açık | 3 günden uzun açık kalan belirti → uyarı (yalnızca sürüdeki hayvanlar). |
 | Salgın şüphesi | Son 7 günde aynı sistemde (solunum, sindirim, …) belirti gösteren ≥ 3 farklı hayvan → tehlike uyarısı. Ölen hayvanların kayıtları da sayılır. |
 | İhbarı zorunlu | Ağızda yara + topallık aynı hayvanda → "Şap şüphesi" (tek hayvanda bile). |
+
+## 9. Damızlık Skoru
+
+Eski "Genetik Skor" her hayvana sabit yazılan bir sayıydı (elle eklenen 85, doğan 70); katım ekranındaki "Genetik Uyum" ise hiçbir hayvanda bulunmayan `genetics` alanını okuduğu için hep %50 gösteriyordu. İkisi de kaldırıldı. Yerine kayıtlı verilerden **her açılışta yeniden hesaplanan** (saklanmayan) damızlık skoru geldi: `core/performanceIndex.js`, kurallar `data/performance-index.js`.
+
+```mermaid
+flowchart LR
+  W["animals.birthWeight + weightHistory"] --> G[Büyüme hızı]
+  BR[(breedingRecords)] --> F[Gebe kalma]
+  BR --> P[Batında yavru]
+  BR --> S[Yavru yaşatma]
+  MR[(mortalityRecords)] --> S
+  G -->|yavruların| PG[Yavruların büyümesi]
+  HO[(healthObservations)] --> H[Hastalık direnci]
+  TR[(treatmentRecords)] --> H
+  F & P & S & PG & G & H --> OWN[Kendi skoru]
+  OWN -->|ana + baba| PED[Ana-baba skoru]
+  OWN & PED --> IDX["Damızlık skoru 0–100<br/>(verim odağına göre ağırlıklı)"]
+  IDX --> UI1["Profil kartı / Sürü listesi"]
+  IDX --> UI2["Katım: beklenen yavru skoru"]
+```
+
+| Kural | Değer |
+|---|---|
+| Puanlama | Her özellik iki referansa göre: zayıf değer → 20, iyi değer → 80 (ör. kuzu büyümesi 120 → 280 g/gün). |
+| Az veri | Puan 50'ye çekilir: `(n × puan + k × 50) / (n + k)`. Güven: düşük / orta / yüksek. |
+| Eksik özellik | Ağırlığı diğer özelliklere dağılır. Yalnızca sağlık verisi varsa skor üretilmez ("Veri yok"). |
+| Büyüme | Doğumdan 12 aylığa kadar, en az 30 gün arayla iki tartım. Tartım Kaydı her girişte `weightHistory`'ye tarihli eklenir (aynı gün tek kayıt). |
+| Gebe kalma | Sonuçlanmış katımlar (doğurdu / tutmadı). Koç için yalnızca tek koçlu katımlar. |
+| Yavru yaşatma | Yavrunun ilk 90 günü; 90 günden küçük canlı yavrular henüz sayılmaz. |
+| Hastalık direnci | Son 12 ayda Orta/Ağır belirti + belirtiye bağlı olmayan bireysel tedavi. Aşı, antiparaziter, vitamin ve toplu uygulamalar sayılmaz. |
+| Süt | Süt verimi kaydı olmadığı için süt odağında annenin yavru büyütmesi ve yaşatması ağır basar. |
 

@@ -10,11 +10,12 @@
  * - confirmPregnancy / markMatingFailed: Anaç bazında gebelik doğrulama / tutmadı
  * - applyBirthToRecords / closeDamInRecords: Doğum ve ölümün kayıtlara işlenmesi
  * - recordBirth: Gebelik kaydını sonlandırma
- * - calculateCompatibility: Genetik uyum skoru
+ * - calculateCompatibility: Beklenen yavru skoru (ebeveynlerin damızlık skorlarından)
  */
 
 import { todayIso, addDaysIso, daysBetweenIso } from './dateUtils.js';
-import { getAnimalById, getState, setState } from './state.js';
+import { getState, readState, setState } from './state.js';
+import { expectedOffspringScore } from './performanceIndex.js';
 import { buildTask } from './workforceManager.js';
 import { DAM_STATUS, getDamStatus, deriveRecordStatus, isOpenDamStatus, getOpenDamMap, normalizeParentId } from './breedingStatus.js';
 
@@ -408,37 +409,13 @@ export function markMatingFailed(recordId, damId) {
 }
 
 // ═══════════════════════════════════════════════════════════
-// 6. Genetik Uyum Skoru
+// 6. Beklenen Yavru Skoru
 // ═══════════════════════════════════════════════════════════
 /**
- * Verim odağına göre 0-100 arası genetik uyum skoru hesaplar.
- * @param {string} animalIdA — Koyun ID
- * @param {string} animalIdB — Koç ID
- * @param {string} focusMode — 'meat', 'milk', 'breed'
- * @returns {number} 0-100
+ * Eşleşmeden beklenen yavru skoru: anacın ve koçun damızlık skorlarının (core/performanceIndex.js)
+ * seçili verim odağına göre ortalaması. Ebeveynlerden birinin skoru hesaplanamıyorsa score null döner.
+ * @returns {{ score: number|null, dam: number|null, sire: number|null }}
  */
-export function calculateCompatibility(animalIdA, animalIdB, focusMode) {
-  const animalA = getAnimalById(animalIdA);
-  const animalB = getAnimalById(animalIdB);
-
-  if (!animalA || !animalB || !animalA.genetics || !animalB.genetics) return 50;
-
-  const gA = animalA.genetics;
-  const gB = animalB.genetics;
-
-  let score = 0;
-
-  if (focusMode === 'meat') {
-    const meatAvg = (gA.meat + gB.meat) / 2;
-    const growthAvg = (gA.growth + gB.growth) / 2;
-    score = (meatAvg * 0.4) + (growthAvg * 0.4) + (((gA.resistance + gB.resistance) / 2) * 0.2);
-  } else if (focusMode === 'milk') {
-    score = (gA.milk * 0.6) + (gB.milk * 0.2) + (((gA.resistance + gB.resistance) / 2) * 0.2);
-  } else {
-    const fertAvg = (gA.fertility + gB.fertility) / 2;
-    const resAvg = (gA.resistance + gB.resistance) / 2;
-    score = (fertAvg * 0.6) + (resAvg * 0.4);
-  }
-
-  return Math.min(Math.max(Math.round(score), 0), 100);
+export function calculateCompatibility(damId, sireId, focusMode) {
+  return expectedOffspringScore(readState(), damId, sireId, focusMode || 'meat');
 }

@@ -123,8 +123,14 @@ export function openBreedingModal(preselectedDamId = null, preselectedSireId = n
 
       const compatHtml = compat !== null ? `
         <div style="text-align:center; margin:8px 0;">
-          <span style="font-size:0.75rem; color:var(--text-muted);">Genetik Uyum:</span>
-          <span style="font-size:1.1rem; font-weight:700; color:${compat >= 70 ? 'var(--accent-green)' : compat >= 50 ? 'var(--accent-amber)' : 'var(--danger-red)'}; margin-left:6px;">%${compat}</span>
+          <span style="font-size:0.75rem; color:var(--text-muted);">Beklenen Yavru Skoru:</span>
+          ${compat.score !== null ? `
+            <span style="font-size:1.1rem; font-weight:700; color:${compat.score >= 65 ? 'var(--accent-green)' : compat.score >= 45 ? 'var(--accent-amber)' : 'var(--danger-red)'}; margin-left:6px;">${compat.score}/100</span>
+            <div style="font-size:0.7rem; color:var(--text-muted); margin-top:2px;">Ana ${compat.dam} · Koç ${compat.sire} (kayıtlı performanstan)</div>
+          ` : `
+            <span style="font-size:0.85rem; font-weight:600; color:var(--text-secondary); margin-left:6px;">Yeterli veri yok</span>
+            <div style="font-size:0.7rem; color:var(--text-muted); margin-top:2px;">Ana ${compat.dam ?? '—'} · Koç ${compat.sire ?? '—'} — tartım, doğum ve katım kayıtları girildikçe hesaplanır.</div>
+          `}
         </div>
       ` : '';
 
