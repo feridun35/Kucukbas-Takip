@@ -12,6 +12,8 @@ import { isTaskOverdue } from './workforceManager.js';
 import { getOpenDamMap, DAM_STATUS } from './breedingStatus.js';
 import { computeQuarantinedAnimals } from './healthRecords.js';
 import { todayIso, daysBetweenIso } from './dateUtils.js';
+import { detectOutbreaks, detectNotifiablePatterns, findStaleOpenObservations, symptomLabel } from './observationRecords.js';
+import { OBSERVATION_RULES } from '../data/symptom-catalog.js';
 
 const ORDER = { danger: 0, warning: 1, info: 2 };
 const FEED_WARNING_DAYS = 7;
@@ -49,6 +51,30 @@ export function computeAlerts() {
   const sick = animals.filter(a => a.status === 'danger').map(a => a.id);
   if (sick.length) {
     alerts.push({ id: 'sick', type: 'danger', icon: '🩺', title: `${sick.length} hayvan hasta olarak işaretli`, desc: listIds(sick) });
+  }
+
+  // ── İhbarı zorunlu hastalık şüphesi (tek hayvanda bile) ──
+  const observations = state.healthObservations || [];
+  detectNotifiablePatterns(observations, today).forEach(n => {
+    alerts.push({ id: `notifiable-${n.pattern.id}`, type: 'danger', icon: '🚨', title: n.pattern.title, desc: `${listIds(n.animalIds)} — ${n.pattern.desc}` });
+  });
+
+  // ── Salgın şüphesi: aynı sistemde birden çok hayvanda belirti ──
+  detectOutbreaks(observations, today).forEach(o => {
+    alerts.push({
+      id: `outbreak-${o.system}`,
+      type: 'danger',
+      icon: '⚠️',
+      title: `Salgın şüphesi (${o.systemLabel}): son ${OBSERVATION_RULES.outbreakWindowDays} günde ${o.animalIds.length} hayvan`,
+      desc: `${o.symptoms.map(symptomLabel).join(', ')} — hasta hayvanları ayırın, veteriner hekime danışın.`
+    });
+  });
+
+  // ── Uzun süredir açık belirtiler ──
+  const stale = findStaleOpenObservations(observations, animals.map(a => a.id), today);
+  if (stale.length) {
+    const ids = [...new Set(stale.map(o => o.animalId))];
+    alerts.push({ id: 'stale-observations', type: 'warning', icon: '🤒', title: `${ids.length} hayvanda ${OBSERVATION_RULES.staleOpenDays} günden uzun süredir açık belirti var`, desc: `${listIds(ids)} — kontrol edin; iyileştiyse kaydı kapatın, iyileşmediyse veteriner hekime danışın.` });
   }
 
   // ── Gecikmiş görevler ──

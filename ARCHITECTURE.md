@@ -123,6 +123,7 @@ Saf modüller state'e bağımlı değildir; hem her `setState`'te çalışan `he
 - `healthRecords.js` — arınma hesabı, karantina listesi, aşı ajandası
 - `breedingStatus.js` — anaç bazında gebelik durumu, gebe hayvan listesi
 - `syncMerge.js` — üç yönlü kayıt bazında birleştirme
+- `observationRecords.js` — belirtiden hayvan durumu türetme, salgın şüphesi, ihbarı zorunlu belirti birlikteliği, uzun süre açık kalan belirtiler
 - `sanitize.js` — HTML kaçışlama (`escapeHtml`), serbest metin temizleme (`stripTags`), küpe no karakter kuralı (`isValidTag`)
 - `dateUtils.js` — yerel saat dilimine göre takvim tarihi (`todayIso`, `addDaysIso`, `daysBetweenIso`). `toISOString()` UTC verdiği için gün hesabında kullanılmaz.
 
@@ -194,6 +195,7 @@ AppState
 │   ├── pharmacyStock[], customMedications[]
 │   ├── tasks[], taskHistory[]   ← bekleyen aşılar = tasks (type: 'vaccine')
 │   ├── breedingRecords[]
+│   ├── healthObservations[] ← belirti kayıtları (tarih, belirtiler, şiddet, ateş, not, açık/iyileşti, bağlı tedaviler)
 │   ├── feedInventory[], feedHistory[]
 │   ├── mortalityRecords[]
 │   └── alerts[]             ← kullanılmıyor; bildirimler core/alertsEngine.js ile kayıtlı veriden üretilir
@@ -434,7 +436,31 @@ Bildirimler `{ source, keys }` meta bilgisi taşır: `local`, `cloud`, `load`, `
 ### Bilinen sınırlamalar / henüz yapılmamış özellikler
 
 - **Hayvan satışı kaydı yok.** Hayvan profili ve ROI'deki "Hızlı Satış" yalnızca bilgi mesajı gösteriyor; hayvan sürüden çıkmıyor, satış geliri kaydedilmiyor.
-- **Henüz çalışmayan düğmeler.** "Hastalık / Belirti Kaydet", "AI Bireysel Teşhis" (profil) ve "Pasaportu Paylaş" yalnızca bilgi mesajı gösteriyor. Yapay zeka teşhis sayfasının sonucu bir hayvana bağlanmıyor ve kaydedilmiyor.
+- **Henüz çalışmayan düğmeler.** "AI Bireysel Teşhis" (profil) ve "Pasaportu Paylaş" yalnızca bilgi mesajı gösteriyor. Yapay zeka teşhis sayfası kural tabanlı ve sonucu kaydedilmiyor; ayrıca ele alınacak.
 - **Rol yetkisi yok.** "Sahip / Çoban" seçimi yalnızca görünümü değiştiriyor; aynı hesapla herkes her işlemi yapabiliyor.
 - **Senkron yükü büyüyor.** Çiftlik verisi bulutta tek JSON satırı olarak tutuluyor ve her değişiklikte tamamı gönderiliyor. Örneğin 1500 hayvanda bu yaklaşık 0.5 MB eder. Yem geçmişi gibi listeler zamanla büyüdükçe bu boyut da artar.
+
+## 8. Belirti Kaydı ve Sağlık Takibi
+
+```mermaid
+flowchart LR
+  M["observation-modal<br/>(hayvan profili → Sağlık)"] -->|recordObservation| O[(healthObservations)]
+  O -->|deriveStatusFromObservations| AN[(animals.status)]
+  O -->|kontrol görevi +3 gün<br/>observationId| TK[(tasks)]
+  T["Tedavi Uygula<br/>(açık belirtiden)"] -->|linkTreatmentToObservation| O
+  R["İyileşti"] -->|resolveObservation| O
+  R -->|bekleyen kontrol görevi silinir| TK
+  O --> AE["alertsEngine"]
+  AE --> D["Panel bildirimleri"]
+  O --> HO["#health-observations<br/>Belirti Takibi sayfası"]
+```
+
+| Kural | Değer (`data/symptom-catalog.js`) |
+|---|---|
+| Hayvan durumu | Açık belirtilerin en yüksek şiddeti: Ağır → Hasta, Orta → Riskli, Hafif → değişmez. İyileşti ile kapanınca yeniden hesaplanır. |
+| Ateş | ≥ 40.0 °C en az Orta, ≥ 41.0 °C Ağır, < 37.5 °C en az Orta. Geçerli aralık 35–43 °C. |
+| Kontrol görevi | Kayıttan 3 gün sonra ("Kontrol: <küpe> belirtileri"). |
+| Uzun süre açık | 3 günden uzun açık kalan belirti → uyarı (yalnızca sürüdeki hayvanlar). |
+| Salgın şüphesi | Son 7 günde aynı sistemde (solunum, sindirim, …) belirti gösteren ≥ 3 farklı hayvan → tehlike uyarısı. Ölen hayvanların kayıtları da sayılır. |
+| İhbarı zorunlu | Ağızda yara + topallık aynı hayvanda → "Şap şüphesi" (tek hayvanda bile). |
 

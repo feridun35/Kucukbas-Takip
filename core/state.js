@@ -100,7 +100,8 @@ const EMPTY_STATE_TEMPLATE = {
   pharmacyStock: [],
   treatmentRecords: [],
   customMedications: [],
-  breedingRecords: []
+  breedingRecords: [],
+  healthObservations: []
 };
 
 // Bellekteki aktif state nesnesi
@@ -266,6 +267,18 @@ export function getInitialDemoState() {
       }
     ],
     customMedications: [],
+    healthObservations: [
+      {
+        id: 'OBS-DEMO-001', animalId: 'TR-088', date: addDaysIso(todayIso(), -2),
+        symptoms: ['cough', 'nasal_discharge'], note: 'Sabah yemliğe gelmedi, burnunda sarı akıntı.',
+        temperature: 40.2, severity: 'moderate', status: 'open', resolvedDate: null, treatmentIds: [], createdAt: addDaysIso(todayIso(), -2)
+      },
+      {
+        id: 'OBS-DEMO-002', animalId: 'TR-099', date: addDaysIso(todayIso(), -1),
+        symptoms: ['anorexia', 'lethargy'], note: 'Kondisyon düşük, ayağa kalkmakta zorlanıyor.',
+        temperature: 41.1, severity: 'severe', status: 'open', resolvedDate: null, treatmentIds: [], createdAt: addDaysIso(todayIso(), -1)
+      }
+    ],
     breedingRecords: [
       {
         id: 'BR-DEMO-001',
@@ -340,7 +353,8 @@ export function getInitialBlankState(user) {
     pharmacyStock: [],
     treatmentRecords: [],
     customMedications: [],
-    breedingRecords: []
+    breedingRecords: [],
+    healthObservations: []
   };
 }
 

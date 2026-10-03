@@ -80,7 +80,7 @@ export function refreshCurrentRoute() {
 
 function _isUserInteracting() {
   // Ortak modal ve kendi kapsayıcısını kullanan eşleşme modalı
-  const modalRoots = ['custom-modal-container', 'breeding-modal-root'];
+  const modalRoots = ['custom-modal-container', 'breeding-modal-root', 'observation-modal-root'];
   if (modalRoots.some(id => (document.getElementById(id)?.children.length || 0) > 0)) return true;
 
   const active = document.activeElement;

@@ -218,7 +218,7 @@ export async function openTreatmentModal(preselectedAnimalId = null) {
       summaryMsg += `\n\n🛑 Arınma süresi aktif edildi.`;
     }
     await showAlert('Tedavi Uygulandı ✅', summaryMsg, '✅');
-    return { applied: true };
+    return { applied: true, recordId: result.record.id };
   } else {
     await showAlert('Hata', result.message, '❌');
     return { applied: false };
