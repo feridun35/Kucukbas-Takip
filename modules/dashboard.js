@@ -4,7 +4,7 @@
  * Refah & Isıl Stres Paneli, Akıllı Asistan Bildirimleri
  */
 
-import { getState, setState, subscribe } from '../core/state.js';
+import { getState, setState } from '../core/state.js';
 import { getCurrentUser } from '../core/auth.js';
 import { getAllQuarantinedAnimals } from '../core/healthManager.js';
 import { calculateAverageDailyGain } from '../core/herdMathEngine.js';

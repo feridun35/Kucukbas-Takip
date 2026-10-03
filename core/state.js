@@ -17,7 +17,7 @@ import {
 import { syncHerdMathState } from './herdMathEngine.js';
 import { migrateTenantData, CURRENT_SCHEMA_VERSION } from './migrations.js';
 import { mergeFarmPayloads } from './syncMerge.js';
-import { pushLocalStateToCloud, syncOnLoad, setCloudLoadDone, setSyncStatus, SYNC_STATUS } from './syncManager.js';
+import { pushLocalStateToCloud, syncOnLoad, setCloudLoadDone, setSyncStatus, SYNC_STATUS, connectStateBridge } from './syncManager.js';
 
 // ── Anahtar Sınıfları ──
 // Hiçbir yere yazılmayan oturum anahtarları
@@ -112,7 +112,8 @@ const _subscribers = new Set();
 
 /**
  * State değişikliklerini dinle
- * @param {Function} callback - (newState, meta: { source, keys }) => void
+ * @param {Function} callback - (meta: { source, keys }) => void
+ *   Güncel state gerekiyorsa callback içinde getState() çağrılır (her bildirimde derin kopya alınmaz).
  * @returns {Function} unsubscribe fonksiyonu
  */
 export function subscribe(callback) {
@@ -149,6 +150,16 @@ export function setState(partial) {
 
   const source = keys.length === 1 && keys[0] === 'sensors' ? STATE_SOURCES.SENSORS : STATE_SOURCES.LOCAL;
   _notifySubscribers({ source, keys });
+}
+
+/**
+ * State'e KOPYASIZ, salt-okunur erişim (performans için).
+ * Yalnızca okuyan ve sonucu değiştirmeyen core fonksiyonları içindir; dönen nesneler asla
+ * değiştirilmemelidir — değişiklik her zaman setState() ile yapılır.
+ * UI ve yazma yapan kod getState() (derin kopya) kullanmaya devam eder.
+ */
+export function readState() {
+  return AppState;
 }
 
 /**
@@ -515,7 +526,24 @@ export function getCloudPayload() {
   return data;
 }
 
+// Aynı işlem (aynı JS görevi) içindeki ardışık setState çağrıları tek bir localStorage yazımında birleştirilir.
+// Yazım mikro-görevde yapılır: tarayıcı bir sonraki olaya / sayfa kapanışına geçmeden önce tamamlanır.
+let _persistScheduled = false;
+let _persistNeedsPush = false;
+
 function _persistTenantState(options = {}) {
+  if (!AppState.currentTenantKey) return;
+  if (options.skipCloudPush !== true) _persistNeedsPush = true;
+  if (_persistScheduled) return;
+  _persistScheduled = true;
+  queueMicrotask(_flushPersist);
+}
+
+function _flushPersist() {
+  _persistScheduled = false;
+  const needsPush = _persistNeedsPush;
+  _persistNeedsPush = false;
+
   const tenantKey = AppState.currentTenantKey;
   if (!tenantKey) return;
 
@@ -524,7 +552,7 @@ function _persistTenantState(options = {}) {
 
     // Demo hesabı ve cihaz-yerel güncellemeler buluta gönderilmez. Diğer her değişiklik "kirli" işaretlenir;
     // syncManager bulut eşitlemesi tamamlanınca / bağlantı gelince gönderir (veri kaybolmaz).
-    if (options.skipCloudPush !== true && !_isDemoUser(AppState.currentUser)) {
+    if (needsPush && !_isDemoUser(AppState.currentUser)) {
       pushLocalStateToCloud(tenantKey);
     }
   } catch (e) {
@@ -533,11 +561,13 @@ function _persistTenantState(options = {}) {
 }
 
 function _notifySubscribers(meta = { source: STATE_SOURCES.LOCAL, keys: [] }) {
-  if (_subscribers.size === 0) return;
-  const snapshot = getState();
   _subscribers.forEach(cb => {
-    try { cb(snapshot, meta); } catch (e) { console.error('[State] Subscriber error:', e); }
+    try { cb(meta); } catch (e) { console.error('[State] Subscriber error:', e); }
   });
 }
+
+// syncManager state'e bu köprü üzerinden erişir (state ⇄ syncManager döngüsel importu yok).
+// syncManager yalnızca okur (aktif kiracı/kullanıcı), bu yüzden kopyasız readState verilir.
+connectStateBridge({ getState: readState, applyCloudState, getCloudPayload });
 
 export default AppState;

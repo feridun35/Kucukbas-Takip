@@ -7,7 +7,7 @@ import { getState, setState } from '../core/state.js';
 import { showAlert, showFormModal } from '../core/modal.js';
 import { addAnimal } from '../core/herdManager.js';
 import { BREED_OPTIONS, ANIMAL_TYPES, ANIMAL_GROUPS } from '../data/herd-constants.js';
-import { getAnimalWithdrawalStatus } from '../core/healthManager.js';
+import { getAllQuarantinedAnimals } from '../core/healthManager.js';
 
 let _container = null;
 let _searchTerm = '';
@@ -28,8 +28,12 @@ export function init() {
   _attachEvents();
 }
 
+// Karantina durumu her çizimde bir kez hesaplanır (kart başına yeniden taranmaz)
+let _quarantineMap = new Map();
+
 function _renderContent() {
   const animals = getState().animals || [];
+  _quarantineMap = new Map(getAllQuarantinedAnimals().map(q => [q.animalId, q]));
   const totalAnimalsInHerd = animals.length;
   
   // 1) Filtreleme
@@ -52,10 +56,7 @@ function _renderContent() {
       if (_activeFilter === 'Besi' && a.group !== 'Besi') return false;
       if (_activeFilter === 'Sağmal' && a.group !== 'Sağmal') return false;
       if (_activeFilter === 'Kuzu/Oğlak' && a.type !== 'Kuzu' && a.type !== 'Oğlak') return false;
-      if (_activeFilter === 'Karantinadaki') {
-        const ws = getAnimalWithdrawalStatus(a.id);
-        if (!ws.hasActiveWithdrawal) return false;
-      }
+      if (_activeFilter === 'Karantinadaki' && !_quarantineMap.has(a.id)) return false;
     }
     return true;
   });
@@ -139,8 +140,8 @@ function _renderAnimalCard(animal) {
   if (animal.status === 'good') { statusColor = 'var(--accent-green)'; }
 
   // Karantina kontrolu
-  const ws = getAnimalWithdrawalStatus(animal.id);
-  const quarantineBadge = ws.hasActiveWithdrawal
+  const ws = _quarantineMap.get(animal.id);
+  const quarantineBadge = ws
     ? `<span style="font-size:0.6rem; background:rgba(239,68,68,0.15); color:var(--danger-red); padding:1px 6px; border-radius:6px; font-weight:600; margin-left:6px;">⚕️ ${ws.meatDaysLeft > 0 ? ws.meatDaysLeft + 'g' : ''}</span>`
     : '';
 
