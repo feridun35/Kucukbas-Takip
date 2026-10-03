@@ -4,9 +4,8 @@
  * core/breedingManager.js fonksiyonlarını çağırır, doğrudan state yazar.
  */
 
-import { getState, setState } from '../core/state.js';
-import { createMatingRecord, checkInbreedingRisk, syncBreedingTasks, calculateCompatibility } from '../core/breedingManager.js';
-import { addTask } from '../core/workforceManager.js';
+import { getState } from '../core/state.js';
+import { saveMatingRecord, checkInbreedingRisk, calculateCompatibility } from '../core/breedingManager.js';
 
 // ═══════════════════════════════════════════════════════════
 // Ana Modal Açma Fonksiyonu
@@ -272,20 +271,12 @@ export function openBreedingModal(preselectedDamId = null) {
         if (activeTab === 'individual') {
           if (!selectedSireId || !selectedDamId) return;
 
-          const record = createMatingRecord('INDIVIDUAL', {
+          // Kayıt + gebelik takvimi görevleri (core/breedingManager)
+          const { record } = saveMatingRecord('INDIVIDUAL', {
             sireIds: [selectedSireId],
             damIds: [selectedDamId],
             startDate: matingDate
-          }, animals);
-
-          // State'e kaydet
-          const currentRecords = [...(getState().breedingRecords || [])];
-          currentRecords.unshift(record);
-          setState({ breedingRecords: currentRecords });
-
-          // Görevleri oluştur
-          const tasks = syncBreedingTasks(record);
-          tasks.forEach(t => addTask(t));
+          });
 
           _closeModal();
           resolve({ saved: true, record });
@@ -294,19 +285,12 @@ export function openBreedingModal(preselectedDamId = null) {
           // GROUP
           if (selectedGroupSires.size === 0 || selectedGroupDams.size === 0) return;
 
-          const record = createMatingRecord('GROUP', {
+          const { record } = saveMatingRecord('GROUP', {
             sireIds: [...selectedGroupSires],
             damIds: [...selectedGroupDams],
             startDate: matingDate,
             endDate: groupEndDate || null
-          }, animals);
-
-          const currentRecords = [...(getState().breedingRecords || [])];
-          currentRecords.unshift(record);
-          setState({ breedingRecords: currentRecords });
-
-          const tasks = syncBreedingTasks(record);
-          tasks.forEach(t => addTask(t));
+          });
 
           _closeModal();
           resolve({ saved: true, record });

@@ -10,6 +10,7 @@
 
 // ── İlaç Kategorileri ──
 export const MED_CATEGORIES = [
+  { value: 'asi',               label: 'Aşı' },
   { value: 'antibiyotik',       label: 'Antibiyotik' },
   { value: 'nsaid',             label: 'NSAID / Ağrı Kesici' },
   { value: 'vitamin',           label: 'Vitamin / Mineral' },

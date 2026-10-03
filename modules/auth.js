@@ -3,7 +3,7 @@
  * Glassmorphism temalı, mobil ergonomik Giriş ve Kayıt paneli.
  */
 
-import { login, registerUser } from '../core/auth.js';
+import { login, loginAsDemo, registerUser } from '../core/auth.js';
 import { navigateTo } from '../core/router.js';
 import { showAlert } from '../core/modal.js';
 
@@ -69,11 +69,11 @@ function _renderLoginForm() {
     <form id="form-login" onsubmit="return false;" style="display:flex; flex-direction:column; gap:16px;">
       <div>
         <label style="display:block; font-size:0.85rem; font-weight:600; color:var(--text-secondary); margin-bottom:6px;">
-          E-Posta Adresi veya Kullanıcı Adı
+          E-Posta Adresi
         </label>
         <div style="position:relative;">
           <span style="position:absolute; left:14px; top:50%; transform:translateY(-50%); font-size:1.1rem; opacity:0.6;">👤</span>
-          <input type="text" id="login-email" placeholder="admin veya e-posta adresiniz"
+          <input type="email" id="login-email" autocomplete="email" placeholder="ornek@ciftlik.com"
                  style="width:100%; box-sizing:border-box; padding:14px 14px 14px 44px; border-radius:14px; background:rgba(255,255,255,0.06); border:1px solid var(--glass-border); color:var(--text-primary); font-size:1rem; font-family:inherit; outline:none; transition:border-color 0.2s;">
         </div>
       </div>
@@ -84,18 +84,20 @@ function _renderLoginForm() {
         </label>
         <div style="position:relative;">
           <span style="position:absolute; left:14px; top:50%; transform:translateY(-50%); font-size:1.1rem; opacity:0.6;">🔒</span>
-          <input type="password" id="login-password" placeholder="••••••••"
+          <input type="password" id="login-password" autocomplete="current-password" placeholder="••••••••"
                  style="width:100%; box-sizing:border-box; padding:14px 14px 14px 44px; border-radius:14px; background:rgba(255,255,255,0.06); border:1px solid var(--glass-border); color:var(--text-primary); font-size:1rem; font-family:inherit; outline:none; transition:border-color 0.2s;">
         </div>
-      </div>
-
-      <div style="font-size:0.8rem; background:rgba(34, 197, 94, 0.08); border:1px solid rgba(34, 197, 94, 0.2); padding:10px 12px; border-radius:12px; color:var(--text-secondary); line-height:1.4;">
-        👑 <b>Admin Hesabı:</b> <code>admin</code> / <code>admin</code> (10 Hayvanlı Örnek Çiftlik)
       </div>
 
       <button type="submit" id="btn-submit-login" class="btn-primary" style="width:100%; padding:16px; border-radius:16px; font-size:1.05rem; font-weight:700; margin-top:4px; box-shadow:0 4px 20px rgba(34,197,94,0.3);">
         Oturum Aç ➔
       </button>
+      <button type="button" id="btn-demo-login" class="btn-secondary" style="width:100%; padding:14px; border-radius:16px; font-size:0.95rem; font-weight:600;">
+        🐑 Demo Çiftliği İncele
+      </button>
+      <div style="font-size:0.75rem; color:var(--text-muted); line-height:1.4; text-align:center;">
+        Demo, 10 hayvanlı örnek bir çiftliktir ve yalnızca bu cihazda saklanır.
+      </div>
     </form>
   `;
 }
@@ -138,15 +140,25 @@ function _renderRegisterForm() {
 
       <div>
         <label style="display:block; font-size:0.85rem; font-weight:600; color:var(--text-secondary); margin-bottom:6px;">
-          Şifre (En az 4 karakter)
+          Şifre (En az 6 karakter)
         </label>
         <div style="position:relative;">
           <span style="position:absolute; left:14px; top:50%; transform:translateY(-50%); font-size:1.1rem; opacity:0.6;">🔒</span>
-          <input type="password" id="reg-password" placeholder="••••••••"
+          <input type="password" id="reg-password" autocomplete="new-password" placeholder="••••••••"
                  style="width:100%; box-sizing:border-box; padding:14px 14px 14px 44px; border-radius:14px; background:rgba(255,255,255,0.06); border:1px solid var(--glass-border); color:var(--text-primary); font-size:1rem; font-family:inherit; outline:none;">
         </div>
       </div>
 
+      <details style="font-size:0.8rem; color:var(--text-secondary);">
+        <summary style="cursor:pointer;">Eski sürümde hesabım vardı</summary>
+        <div style="margin-top:8px;">
+          <label style="display:block; font-size:0.8rem; color:var(--text-muted); margin-bottom:6px; line-height:1.4;">
+            Eski şifreniz (yeni şifrenizden farklıysa). Aynı e-posta ile kayıt olduğunuzda çiftlik verileriniz yeni hesabınıza taşınır.
+          </label>
+          <input type="password" id="reg-legacy-password" autocomplete="off" placeholder="Eski şifre (opsiyonel)"
+                 style="width:100%; box-sizing:border-box; padding:12px 14px; border-radius:14px; background:rgba(255,255,255,0.06); border:1px solid var(--glass-border); color:var(--text-primary); font-size:0.95rem; font-family:inherit; outline:none;">
+        </div>
+      </details>
       <div style="font-size:0.75rem; color:var(--text-muted); line-height:1.4;">
         ☁️ Çiftlik verileriniz ve hesabınız tüm cihazlarınız (PC & Mobil) arasında Supabase bulut ile otomatik senkronize edilecektir.
       </div>
@@ -205,6 +217,15 @@ function _attachEvents() {
     });
   }
 
+  // Demo hesabı (yerel)
+  const btnDemo = _container.querySelector('#btn-demo-login');
+  if (btnDemo) {
+    btnDemo.addEventListener('click', () => {
+      loginAsDemo();
+      navigateTo('dashboard');
+    });
+  }
+
   // Form Submit Register
   const formRegister = _container.querySelector('#form-register');
   if (formRegister) {
@@ -214,6 +235,7 @@ function _attachEvents() {
       const ownerName = _container.querySelector('#reg-owner')?.value || '';
       const email = _container.querySelector('#reg-email')?.value || '';
       const password = _container.querySelector('#reg-password')?.value || '';
+      const legacyPassword = _container.querySelector('#reg-legacy-password')?.value || '';
 
       const submitBtn = _container.querySelector('#btn-submit-register');
       if (submitBtn) {
@@ -221,10 +243,17 @@ function _attachEvents() {
         submitBtn.innerText = 'Hesap Oluşturuluyor...';
       }
 
-      const res = await registerUser({ farmName, ownerName, email, password });
+      const res = await registerUser({ farmName, ownerName, email, password, legacyPassword });
       if (res.success) {
-        await showAlert('Kayıt Tamamlandı', `Tebrikler! ${res.user.farmName} çiftliğiniz oluşturuldu ve bulut senkronizasyonu kuruldu.`, '🎉');
+        const msg = res.migrated
+          ? `Eski hesabınız güvenli hesap sistemine taşındı. ${res.user.farmName} verileriniz yükleniyor.`
+          : `Tebrikler! ${res.user.farmName} çiftliğiniz oluşturuldu ve bulut senkronizasyonu kuruldu.`;
+        await showAlert('Kayıt Tamamlandı', msg, '🎉');
         navigateTo('dashboard');
+      } else if (res.needsConfirmation) {
+        await showAlert('E-Posta Doğrulaması', res.message, '✉️');
+        _activeTab = 'login';
+        _renderContent();
       } else {
         await showAlert('Kayıt Başarısız', res.message, '⚠️');
         if (submitBtn) {

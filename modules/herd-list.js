@@ -5,6 +5,8 @@
 
 import { getState, setState } from '../core/state.js';
 import { showAlert, showFormModal } from '../core/modal.js';
+import { addAnimal } from '../core/herdManager.js';
+import { BREED_OPTIONS, ANIMAL_TYPES, ANIMAL_GROUPS } from '../data/herd-constants.js';
 import { getAnimalWithdrawalStatus } from '../core/healthManager.js';
 
 let _container = null;
@@ -212,99 +214,31 @@ function _attachEvents() {
     const femaleOpts = ['Bilinmiyor', ...(state.animals || []).filter(a => a.gender === 'Dişi').map(a => a.id)];
     const maleOpts = ['Bilinmiyor', ...(state.animals || []).filter(a => a.gender === 'Erkek').map(a => a.id)];
 
-    const breedOptions = [
-      'Anadolu Merinosu',
-      'Karacabey Merinosu',
-      'Kıvırcık',
-      'İvesi (Awassi)',
-      'Akkaraman (Kangal)',
-      'Morkaraman',
-      'Karayaka',
-      'Sakız (Chios)',
-      'Dağlıç',
-      'Pırlak (Ramlıç)',
-      'Hemşin',
-      'Norduz',
-      'Bafra',
-      'Romanov',
-      'Dorper',
-      'Suffolk',
-      'Texel',
-      'Lacaune',
-      'Assaf',
-      'Saanen',
-      'Kıl Keçisi (Kara Keçi)',
-      'Ankara Keçisi (Tiftik)',
-      'Halep / Damascus (Şam Keçisi)',
-      'Honamlı',
-      'Maltız (Maltese)',
-      'Alpine',
-      'Boer'
-    ];
-
     const result = await showFormModal('Yeni Hayvan Kaydı', [
       { id: 'id', label: 'Küpe No (RFID ile tarayabilirsiniz)', type: 'text', placeholder: 'Örn: TR-500' },
       { id: 'nickname', label: 'Hayvan Lakabı / İsim (Opsiyonel)', type: 'text', placeholder: 'Örn: Pamuk, Kral, Karabaş' },
-      { id: 'type', label: 'Hayvan Türü / Kategorisi', type: 'select', options: ['Kuzu', 'Oğlak', 'Koyun', 'Koç', 'Keçi', 'Teke'] },
-      { id: 'breed', label: 'Irk', type: 'select', options: breedOptions },
+      { id: 'type', label: 'Hayvan Türü / Kategorisi', type: 'select', options: ANIMAL_TYPES },
+      { id: 'breed', label: 'Irk', type: 'select', options: BREED_OPTIONS },
       { id: 'gender', label: 'Cinsiyet', type: 'select', options: ['Dişi', 'Erkek'] },
-      { id: 'group', label: 'Grup', type: 'select', options: ['Besi', 'Sağmal', 'Gebe', 'Boş', 'Damızlık'] },
+      { id: 'group', label: 'Grup', type: 'select', options: ANIMAL_GROUPS },
       { id: 'weight', label: 'Güncel Ağırlık (kg)', type: 'number', placeholder: 'Örn: 45' },
       { id: 'ageMonths', label: 'Yaş (ay olarak)', type: 'number', placeholder: 'Örn: 18' },
       { id: 'mother', label: 'Ana Küpe No', type: 'select', options: femaleOpts },
       { id: 'father', label: 'Baba Küpe No', type: 'select', options: maleOpts }
     ], '🐑');
 
-    if (result && result.id && result.id.trim() !== '') {
-      const groupToFocus = { 'Sağmal': 'milk', 'Gebe': 'breed', 'Damızlık': 'breed', 'Besi': 'meat', 'Boş': 'meat' };
+    if (!result || !result.id || result.id.trim() === '') return;
 
-      const ageInput = result.ageMonths;
-      let birthDateStr = 'Bilinmiyor';
-      if (ageInput && ageInput.trim() !== '') {
-        const ageMonths = parseInt(ageInput) || 18;
-        const birthDate = new Date();
-        birthDate.setMonth(birthDate.getMonth() - ageMonths);
-        birthDateStr = birthDate.toISOString().split('T')[0];
-      }
-
-      const weightInput = result.weight;
-      const finalWeight = (weightInput && weightInput.trim() !== '') ? parseFloat(weightInput) : 0;
-
-      // Otomatik tür tespiti (eğer kullanıcı seçmediyse)
-      const isGoatBreed = ['Saanen', 'Kıl Keçisi', 'Ankara Keçisi', 'Halep', 'Honamlı', 'Maltız', 'Alpine', 'Boer'].some(b => (result.breed || '').includes(b));
-      const defaultType = isGoatBreed
-        ? (result.gender === 'Dişi' ? 'Keçi' : 'Teke')
-        : (result.gender === 'Dişi' ? 'Koyun' : 'Koç');
-
-      const animalType = result.type || defaultType;
-
-      const newAnimal = {
-        id: result.id.trim(),
-        nickname: result.nickname ? result.nickname.trim() : '',
-        rfid: 'RFID-' + Math.floor(Math.random() * 90000 + 10000),
-        breed: result.breed || 'Anadolu Merinosu',
-        gender: result.gender || 'Dişi',
-        type: animalType,
-        group: result.group || 'Besi',
-        weight: finalWeight,
-        bcs: 3,
-        status: 'good',
-        yieldScore: 85,
-        lastVaccine: '-',
-        focus: groupToFocus[result.group] || 'meat',
-        birthDate: birthDateStr,
-        mother: result.mother || 'Bilinmiyor',
-        father: result.father || 'Bilinmiyor'
-      };
-
-      const currentAnimals = [...(getState().animals || [])];
-      currentAnimals.unshift(newAnimal);
-      setState({ animals: currentAnimals, activeAnimalId: newAnimal.id });
-
-      const displayName = newAnimal.nickname ? `${newAnimal.id} ("${newAnimal.nickname}")` : newAnimal.id;
-      await showAlert('Başarılı', `${displayName} (${newAnimal.type}) başarıyla sürüye eklendi.`, '✅');
-      _renderContent();
+    const added = addAnimal(result);
+    if (!added.success) {
+      await showAlert('Kayıt Yapılamadı', added.message, '⚠️');
+      return;
     }
+
+    const newAnimal = added.animal;
+    const displayName = newAnimal.nickname ? `${newAnimal.id} ("${newAnimal.nickname}")` : newAnimal.id;
+    await showAlert('Başarılı', `${displayName} (${newAnimal.type}) başarıyla sürüye eklendi.`, '✅');
+    _renderContent();
   };
 
   const addBtn = _container.querySelector('#btn-add-animal');

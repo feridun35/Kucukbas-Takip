@@ -6,6 +6,7 @@
  */
 
 import { marketPrices } from '../data/mock-data.js';
+import { computeQuarantinedAnimals, isVaccineRecord } from './healthRecords.js';
 
 /**
  * Tekil bir hayvanın günlük Kuru Madde İhtiyacını (DMI) ve Taze Yem Tüketimini hesaplar.
@@ -140,70 +141,6 @@ export function parseDate(dateVal) {
 }
 
 /**
- * Dinamik olarak aktif karantina ve ilaç arınma sürelerini hesaplar.
- * 
- * @param {Array} vaccines 
- * @param {Array} animals 
- * @returns {Object} { activeWithdrawals, lastAppliedMedication, summaryText, hasActiveQuarantine }
- */
-export function calculateHerdMedicationStatus(vaccines = [], animals = []) {
-  const now = new Date();
-  
-  // Aşı ve ilaç listesinden aktif arınma sürelerini türet
-  const activeWithdrawals = [];
-  
-  (vaccines || []).forEach(v => {
-    if (!v.date) return;
-    
-    const meatDays = v.meatDays || 0;
-    const milkDays = v.milkDays || 0;
-    
-    if (meatDays > 0 || milkDays > 0) {
-      const appDate = parseDate(v.date);
-      
-      const meatClearDate = new Date(appDate);
-      meatClearDate.setDate(meatClearDate.getDate() + meatDays);
-      
-      const milkClearDate = new Date(appDate);
-      milkClearDate.setDate(milkClearDate.getDate() + milkDays);
-      
-      const meatDaysRemaining = Math.max(0, Math.ceil((meatClearDate - now) / (1000 * 60 * 60 * 24)));
-      const milkDaysRemaining = Math.max(0, Math.ceil((milkClearDate - now) / (1000 * 60 * 60 * 24)));
-      
-      if (meatDaysRemaining > 0 || milkDaysRemaining > 0) {
-        activeWithdrawals.push({
-          id: v.id,
-          drugName: v.name,
-          target: v.target || 'Tüm Sürü',
-          meatDaysLeft: meatDaysRemaining,
-          milkDaysLeft: milkDaysRemaining,
-          isMeatSafe: meatDaysRemaining === 0,
-          isMilkSafe: milkDaysRemaining === 0
-        });
-      }
-    }
-  });
-
-  const lastApplied = (vaccines || []).find(v => v.status === 'done') || null;
-
-  const hasActiveQuarantine = activeWithdrawals.length > 0;
-  let summaryText = 'Arınma Süresinde Aktif İlaç Bulunmuyor';
-
-  if (hasActiveQuarantine) {
-    summaryText = `${activeWithdrawals.length} İlaç/Tedavi İçin Karantina Devam Ediyor`;
-  } else if (lastApplied) {
-    summaryText = `Son İlaç/Aşı: ${lastApplied.name} (${lastApplied.date})`;
-  }
-
-  return {
-    activeWithdrawals,
-    lastAppliedMedication: lastApplied,
-    summaryText,
-    hasActiveQuarantine
-  };
-}
-
-/**
  * Sürü yapısı ve genel sağlık/sayısal özetlerini hesaplar.
  * 
  * @param {Array} animals 
@@ -257,20 +194,25 @@ export function calculateHerdSummaryStats(animals = []) {
 }
 
 /**
- * Sağlık durumu özetini ekli hayvanlar ve aşılardan hesaplar.
- * 
- * @param {Array} animals 
- * @param {Array} vaccines 
+ * Sağlık durumu özetini hesaplar.
+ * Kaynaklar: animals (klinik durum), treatmentRecords (karantina + yapılan aşılar),
+ * tasks (bekleyen aşı görevleri). Eski `vaccines` listesi artık kullanılmaz.
+ *
+ * @param {Array} animals
+ * @param {Array} treatmentRecords
+ * @param {Array} tasks
  * @returns {Object} healthSummary
  */
-export function calculateHealthSummaryStats(animals = [], vaccines = []) {
+export function calculateHealthSummaryStats(animals = [], treatmentRecords = [], tasks = []) {
   const sick = animals.filter(a => a.status === 'danger').length;
-  const quarantine = animals.filter(a => a.status === 'warning').length;
+  const quarantine = computeQuarantinedAnimals(animals, treatmentRecords).length;
   const expectedBirths = animals.filter(a => a.group === 'Gebe').length;
 
-  const upcomingVaccine = (vaccines || []).find(v => v.status === 'upcoming' || v.status === 'pending');
-  const nextVaccination = upcomingVaccine ? upcomingVaccine.date : '-';
-  const vaccinationCount = (vaccines || []).filter(v => v.status === 'done').length;
+  const upcomingVaccine = (tasks || [])
+    .filter(t => t.type === 'vaccine' && t.status !== 'completed' && t.dueDate)
+    .sort((a, b) => a.dueDate.localeCompare(b.dueDate))[0];
+  const nextVaccination = upcomingVaccine ? upcomingVaccine.dueDate : '-';
+  const vaccinationCount = (treatmentRecords || []).filter(isVaccineRecord).length;
 
   const validBcs = animals.map(a => parseFloat(a.bcs)).filter(b => !isNaN(b) && b > 0);
   const bodyConditionAvg = validBcs.length > 0
@@ -298,10 +240,11 @@ export function calculateHealthSummaryStats(animals = [], vaccines = []) {
 export function syncHerdMathState(AppState) {
   const animals = AppState.animals || [];
   const feedInventory = AppState.feedInventory || [];
-  const vaccines = AppState.vaccines || [];
+  const treatmentRecords = AppState.treatmentRecords || [];
+  const tasks = AppState.tasks || [];
 
   const herdSummary = calculateHerdSummaryStats(animals);
-  const healthSummary = calculateHealthSummaryStats(animals, vaccines);
+  const healthSummary = calculateHealthSummaryStats(animals, treatmentRecords, tasks);
   const financeMetrics = calculateHerdFeedMetrics(animals, feedInventory);
 
   const financeSummary = {

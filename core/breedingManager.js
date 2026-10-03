@@ -6,11 +6,13 @@
  * - checkInbreedingRisk: Akrabalık kontrolü (anne/baba/kardeş)
  * - createMatingRecord: Bireysel veya Grup eşleşme kaydı oluşturma
  * - syncBreedingTasks: Milestone'ları görev sistemine aktarma
+ * - saveMatingRecord: Kaydı + takvim görevlerini tek seferde state'e yazma
  * - recordBirth: Gebelik kaydını sonlandırma
  * - calculateCompatibility: Genetik uyum skoru
  */
 
-import { getAnimalById } from './state.js';
+import { getAnimalById, getState, setState } from './state.js';
+import { buildTask } from './workforceManager.js';
 
 // ── Sabitler ──
 const GESTATION_DAYS = 148;
@@ -225,6 +227,24 @@ export function syncBreedingTasks(breedingRecord) {
   ];
 
   return tasks;
+}
+
+/**
+ * Eşleşme kaydını oluşturur ve gebelik takvimi görevleriyle birlikte TEK bir setState ile kaydeder.
+ * @param {'INDIVIDUAL'|'GROUP'} type
+ * @param {Object} data — { sireIds, damIds, startDate, endDate? }
+ * @returns {{ success: boolean, record: Object }}
+ */
+export function saveMatingRecord(type, data) {
+  const state = getState();
+  const record = createMatingRecord(type, data, state.animals || []);
+  const newTasks = syncBreedingTasks(record).map(buildTask);
+
+  setState({
+    breedingRecords: [record, ...(state.breedingRecords || [])],
+    tasks: [...newTasks, ...(state.tasks || [])]
+  });
+  return { success: true, record };
 }
 
 // ═══════════════════════════════════════════════════════════

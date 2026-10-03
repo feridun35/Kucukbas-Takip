@@ -2,8 +2,18 @@
  * ShepherdAI — Depo & Silo Yönetimi (Kapsamlı Yem Envanter & Fiyat Takibi)
  */
 import { calculateSiloDepletion } from '../core/financeEngine.js';
-import { showAlert, showPrompt, showSelect, showFormModal } from '../core/modal.js';
-import { getState, setState } from '../core/state.js';
+import { showAlert, showSelect, showFormModal } from '../core/modal.js';
+import { getState } from '../core/state.js';
+import {
+  getFeedCatalog,
+  getFeedInventorySummary,
+  getCurrentFeedPrice,
+  addFeedStock,
+  deductDailyHerdFeed,
+  deductFeed,
+  applyRation
+} from '../core/feedManager.js';
+import { FEED_DEDUCTION_REASONS } from '../data/feed-catalog.js';
 
 let _container = null;
 let _viewMode = 'inventory'; // 'inventory' | 'ration' | 'history'
@@ -15,8 +25,7 @@ export function render() {
   
   const state = getState();
   const feedInventory = state.feedInventory || [];
-  const totalKg = feedInventory.filter(f => f.unit === 'kg').reduce((sum, f) => sum + f.amount, 0);
-  const totalVal = feedInventory.reduce((sum, f) => sum + (f.amount * (f.unitPrice || 0)), 0);
+  const { totalKg, totalValue: totalVal } = getFeedInventorySummary(feedInventory);
   
   const dailyConsumption = state.financeSummary?.dailyFeedKg || 0;
   const siloData = calculateSiloDepletion(totalKg, dailyConsumption);
@@ -78,29 +87,14 @@ export function init() {
   const btnFeed = _container.querySelector('#btn-feed-entry');
   if (btnFeed) {
     btnFeed.addEventListener('click', async () => {
-      const defaultFeedCatalog = [
-        { id: 'yonca', name: 'Yonca', icon: '🌿', unit: 'kg', defaultPrice: 9.5 },
-        { id: 'fi', name: 'Fiğ', icon: '🌱', unit: 'kg', defaultPrice: 8.0 },
-        { id: 'bugday', name: 'Buğday', icon: '🌾', unit: 'kg', defaultPrice: 7.8 },
-        { id: 'arpa', name: 'Arpa', icon: '🌾', unit: 'kg', defaultPrice: 7.5 },
-        { id: 'misir', name: 'Mısır Silajı', icon: '🌽', unit: 'kg', defaultPrice: 3.2 },
-        { id: 'saman', name: 'Saman', icon: '🪹', unit: 'kg', defaultPrice: 2.1 },
-        { id: 'hazir', name: 'Hazır Yem (Besi)', icon: '📦', unit: 'kg', defaultPrice: 11.0 },
-        { id: 'kuzu', name: 'Kuzu Gelişim Yemi', icon: '🐣', unit: 'kg', defaultPrice: 13.5 },
-        { id: 'mineral', name: 'Mineral/Vitamin', icon: '💊', unit: 'kg', defaultPrice: 45.0 },
-        { id: 'yalama', name: 'Tuz Yalama Taşı', icon: '🪨', unit: 'adet', defaultPrice: 65.0 }
-      ];
+      const catalog = getFeedCatalog();
+      const feedInventory = getState().feedInventory || [];
 
-      const state = getState();
-      const feedInventory = [...(state.feedInventory || [])];
-
-      const feedOptions = defaultFeedCatalog.map(cat => {
+      const feedOptions = catalog.map(cat => {
         const existing = feedInventory.find(f => f.id === cat.id);
-        const currentAmount = existing ? existing.amount : 0;
-        const currentPrice = existing ? (existing.unitPrice || cat.defaultPrice) : cat.defaultPrice;
         return {
           value: cat.id,
-          label: `${cat.icon} ${cat.name} (Stok: ${currentAmount} ${cat.unit} · ${currentPrice} ₺/${cat.unit})`,
+          label: `${cat.icon} ${cat.name} (Stok: ${existing ? existing.amount : 0} ${cat.unit} · ${getCurrentFeedPrice(cat.id)} ₺/${cat.unit})`,
           color: existing ? '#10b981' : '#3b82f6'
         };
       });
@@ -108,60 +102,20 @@ export function init() {
       const selectedFeed = await showSelect('Yem Türü Seçin', feedOptions, '🌾');
       if (!selectedFeed) return;
 
-      const catItem = defaultFeedCatalog.find(c => c.id === selectedFeed.value);
-      const existing = feedInventory.find(f => f.id === catItem.id);
-      const defaultP = existing ? (existing.unitPrice || catItem.defaultPrice) : catItem.defaultPrice;
-
+      const catItem = catalog.find(c => c.id === selectedFeed.value);
       const form = await showFormModal(`${catItem.icon} Stoğa Yem Girişi (${catItem.name})`, [
         { id: 'amount', label: `Eklenecek Miktar (${catItem.unit})`, type: 'number', placeholder: 'Örn: 500' },
-        { id: 'unitPrice', label: `Birim Fiyat (₺/${catItem.unit})`, type: 'number', value: defaultP, placeholder: 'Örn: 7.5' },
+        { id: 'unitPrice', label: `Birim Fiyat (₺/${catItem.unit})`, type: 'number', value: getCurrentFeedPrice(catItem.id), placeholder: 'Örn: 7.5' },
         { id: 'note', label: 'Tedarikçi / Not (Opsiyonel)', type: 'text', placeholder: 'Örn: Toprak Mahsulleri / 10 çuval' }
       ], '📥');
+      if (!form) return;
 
-      if (!form || !form.amount || isNaN(form.amount) || parseFloat(form.amount) <= 0) return;
-
-      const amount = parseFloat(form.amount);
-      const unitPrice = parseFloat(form.unitPrice) || defaultP;
-      const note = form.note || '';
-
-      const idx = feedInventory.findIndex(f => f.id === catItem.id);
-      if (idx > -1) {
-        const oldAmt = feedInventory[idx].amount;
-        const oldPrice = feedInventory[idx].unitPrice || unitPrice;
-        // Ağırlıklı Ortalama Fiyat Hesabı
-        const newWeightedPrice = ((oldAmt * oldPrice) + (amount * unitPrice)) / (oldAmt + amount);
-        feedInventory[idx] = {
-          ...feedInventory[idx],
-          amount: oldAmt + amount,
-          unitPrice: parseFloat(newWeightedPrice.toFixed(2))
-        };
-      } else {
-        feedInventory.push({
-          id: catItem.id,
-          name: catItem.name,
-          icon: catItem.icon,
-          amount: amount,
-          unit: catItem.unit,
-          unitPrice: unitPrice
-        });
+      const result = addFeedStock({ feedId: catItem.id, amount: form.amount, unitPrice: form.unitPrice, note: form.note });
+      if (!result.success) {
+        await showAlert('Giriş Yapılamadı', result.message, '⚠️');
+        return;
       }
-
-      const totalPrice = amount * unitPrice;
-      const feedHistory = [...(state.feedHistory || [])];
-      feedHistory.unshift({
-        id: 'FH-' + Date.now(),
-        feedId: catItem.id,
-        feedName: catItem.name,
-        amount,
-        unitPrice,
-        totalPrice,
-        type: 'entry',
-        date: new Date().toLocaleDateString('tr-TR', { day: '2-digit', month: 'short', year: 'numeric' }),
-        note: note ? `${note} (${unitPrice} ₺/${catItem.unit})` : `${unitPrice} ₺/${catItem.unit}`
-      });
-
-      setState({ feedInventory, feedHistory });
-      await showAlert('Stok Girişi Başarılı', `${catItem.name} stokuna ${amount} ${catItem.unit} eklendi.\nBirim Fiyat: ${unitPrice} ₺ | Toplam Tutar: ${totalPrice.toLocaleString('tr-TR')} ₺`, '✅');
+      await showAlert('Stok Girişi Başarılı', result.message, '✅');
       _rerender();
     });
   }
@@ -171,7 +125,7 @@ export function init() {
   if (btnDeduct) {
     btnDeduct.addEventListener('click', async () => {
       const state = getState();
-      const feedInventory = [...(state.feedInventory || [])];
+      const feedInventory = state.feedInventory || [];
       const dailyConsumption = state.financeSummary?.dailyFeedKg || 0;
 
       if (feedInventory.length === 0) {
@@ -188,91 +142,41 @@ export function init() {
       if (!choice) return;
 
       if (choice.value === 'AUTO_DAILY') {
-        if (dailyConsumption <= 0) {
-          showAlert('Sürü Boş', 'Sürüde aktif hayvan olmadığı için günlük tüketim 0 kg olarak hesaplanmıştır.', '⚠️');
+        const result = deductDailyHerdFeed();
+        if (!result.success) {
+          showAlert(result.reason === 'empty-herd' ? 'Sürü Boş' : 'Stok Yetersiz', result.message, '⚠️');
           return;
         }
-
-        // Stoktaki kilogram yemler arasından orantılı düş
-        const kgFeeds = feedInventory.filter(f => f.unit === 'kg' && f.amount > 0);
-        if (kgFeeds.length === 0) {
-          showAlert('Stok Yetersiz', 'Depoda kilogram cinsinden kullanılabilecek yem bulunmuyor.', '⚠️');
-          return;
-        }
-
-        const totalAvailableKg = kgFeeds.reduce((s, f) => s + f.amount, 0);
-        let deductAmount = Math.min(dailyConsumption, totalAvailableKg);
-
-        const feedHistory = [...(state.feedHistory || [])];
-
-        kgFeeds.forEach(f => {
-          const idx = feedInventory.findIndex(item => item.id === f.id);
-          if (idx > -1) {
-            const share = (f.amount / totalAvailableKg) * deductAmount;
-            const actualDeduct = parseFloat(share.toFixed(1));
-            feedInventory[idx].amount = Math.max(0, parseFloat((feedInventory[idx].amount - actualDeduct).toFixed(1)));
-
-            feedHistory.unshift({
-              id: 'FH-' + Date.now() + '-' + f.id,
-              feedId: f.id,
-              feedName: f.name,
-              amount: actualDeduct,
-              unitPrice: f.unitPrice || 0,
-              totalPrice: actualDeduct * (f.unitPrice || 0),
-              type: 'deduction',
-              date: new Date().toLocaleDateString('tr-TR', { day: '2-digit', month: 'short', year: 'numeric' }),
-              note: 'Günlük Sürü Yemlemesi Düşüşü'
-            });
-          }
-        });
-
-        setState({ feedInventory, feedHistory });
-        await showAlert('Yemle Düşüldü', `Sürünün günlük ${deductAmount} kg yem tüketimi depodaki yem stoklarından düşüldü ve geçmişe kaydedildi.`, '✅');
+        await showAlert('Yemle Düşüldü', result.message, '✅');
         _rerender();
-      } else {
-        // Manuel yem çıkışı
-        const feedOpts = feedInventory.map(f => ({
-          value: f.id,
-          label: `${f.icon} ${f.name} (Stok: ${f.amount} ${f.unit})`,
-          color: '#f59e0b'
-        }));
-
-        const selFeed = await showSelect('Çıkış Yapılacak Yem', feedOpts, '📦');
-        if (!selFeed) return;
-
-        const targetFeed = feedInventory.find(f => f.id === selFeed.value);
-
-        const form = await showFormModal(`Stoktan Düş (${targetFeed.name})`, [
-          { id: 'amount', label: `Düşülecek Miktar (${targetFeed.unit})`, type: 'number', placeholder: `Mevcut: ${targetFeed.amount}` },
-          { id: 'reason', label: 'Çıkış Sebebi', type: 'select', options: ['Sabah Yemlemesi', 'Akşam Yemlemesi', 'Fire / Bozulma', 'Satış / Devir'] },
-          { id: 'note', label: 'Not (Opsiyonel)', type: 'text', placeholder: 'Örn: Bölme 1 yemliği' }
-        ], '📤');
-
-        if (!form || !form.amount || isNaN(form.amount) || parseFloat(form.amount) <= 0) return;
-
-        const deductAmt = Math.min(parseFloat(form.amount), targetFeed.amount);
-        const idx = feedInventory.findIndex(f => f.id === targetFeed.id);
-        if (idx > -1) {
-          feedInventory[idx].amount = parseFloat((feedInventory[idx].amount - deductAmt).toFixed(1));
-        }
-
-        const feedHistory = [...(state.feedHistory || [])];
-        feedHistory.unshift({
-          id: 'FH-' + Date.now(),
-          feedId: targetFeed.id,
-          feedName: targetFeed.name,
-          amount: deductAmt,
-          unitPrice: targetFeed.unitPrice || 0,
-          totalPrice: deductAmt * (targetFeed.unitPrice || 0),
-          type: 'deduction',
-          date: new Date().toLocaleDateString('tr-TR', { day: '2-digit', month: 'short', year: 'numeric' }),
-          note: `${form.reason || 'Yem Çıkışı'} ${form.note ? '· ' + form.note : ''}`
-        });
-
-        setState({ feedInventory, feedHistory });
-        await showAlert('Stoktan Düşüldü', `${targetFeed.name} stokundan ${deductAmt} ${targetFeed.unit} düşüldü ve kaydedildi.`, '✅');
-        _rerender();
+        return;
       }
+
+      // Manuel yem çıkışı
+      const feedOpts = feedInventory.map(f => ({
+        value: f.id,
+        label: `${f.icon} ${f.name} (Stok: ${f.amount} ${f.unit})`,
+        color: '#f59e0b'
+      }));
+
+      const selFeed = await showSelect('Çıkış Yapılacak Yem', feedOpts, '📦');
+      if (!selFeed) return;
+
+      const targetFeed = feedInventory.find(f => f.id === selFeed.value);
+      const form = await showFormModal(`Stoktan Düş (${targetFeed.name})`, [
+        { id: 'amount', label: `Düşülecek Miktar (${targetFeed.unit})`, type: 'number', placeholder: `Mevcut: ${targetFeed.amount}` },
+        { id: 'reason', label: 'Çıkış Sebebi', type: 'select', options: FEED_DEDUCTION_REASONS },
+        { id: 'note', label: 'Not (Opsiyonel)', type: 'text', placeholder: 'Örn: Bölme 1 yemliği' }
+      ], '📤');
+      if (!form) return;
+
+      const result = deductFeed({ feedId: targetFeed.id, amount: form.amount, reason: form.reason, note: form.note });
+      if (!result.success) {
+        await showAlert('Düşüş Yapılamadı', result.message, '⚠️');
+        return;
+      }
+      await showAlert('Stoktan Düşüldü', result.message, '✅');
+      _rerender();
     });
   }
 
@@ -280,45 +184,17 @@ export function init() {
   const btnRation = _container.querySelector('#btn-save-ration');
   if (btnRation) {
     btnRation.addEventListener('click', async () => {
-      const inputs = _container.querySelectorAll('.ration-input');
-      const state = getState();
-      const feedInventory = [...(state.feedInventory || [])];
-      const feedHistory = [...(state.feedHistory || [])];
-      let totalUsed = 0;
-
-      inputs.forEach(input => {
-        const val = parseFloat(input.value) || 0;
-        if (val > 0) {
-          const feedId = input.getAttribute('data-feed-id');
-          const idx = feedInventory.findIndex(f => f.id === feedId);
-          if (idx > -1) {
-            const available = feedInventory[idx].amount;
-            const use = Math.min(val, available);
-            feedInventory[idx] = { ...feedInventory[idx], amount: parseFloat((available - use).toFixed(1)) };
-            totalUsed += use;
-
-            feedHistory.unshift({
-              id: 'FH-' + Date.now() + '-' + feedId,
-              feedId,
-              feedName: feedInventory[idx].name,
-              amount: use,
-              unitPrice: feedInventory[idx].unitPrice || 0,
-              totalPrice: use * (feedInventory[idx].unitPrice || 0),
-              type: 'ration',
-              date: new Date().toLocaleDateString('tr-TR', { day: '2-digit', month: 'short', year: 'numeric' }),
-              note: 'Rasyon Kullanımı'
-            });
-          }
-        }
+      const amounts = {};
+      _container.querySelectorAll('.ration-input').forEach(input => {
+        amounts[input.getAttribute('data-feed-id')] = input.value;
       });
 
-      if (totalUsed === 0) {
-        showAlert('Uyarı', 'Rasyon için en az bir yem miktarı giriniz.', '⚠️');
+      const result = applyRation(amounts);
+      if (!result.success) {
+        showAlert('Uyarı', result.message, '⚠️');
         return;
       }
-
-      setState({ feedInventory, feedHistory });
-      showAlert('Rasyon Kaydedildi', `Toplam ${totalUsed} kg/adet yem rasyon olarak kullanıldı ve stoktan düşüldü.`, '✅');
+      showAlert('Rasyon Kaydedildi', result.message, '✅');
       _rerender();
     });
   }

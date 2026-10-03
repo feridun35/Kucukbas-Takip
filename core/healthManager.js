@@ -10,6 +10,16 @@
 
 import { getAnimalById, getState, setState } from './state.js';
 import { getDefaultMedications } from '../data/med-library.js';
+import {
+  RECORD_TYPES,
+  calculateWithdrawalFromLastDose,
+  computeWithdrawalStatus,
+  computeQuarantinedAnimals,
+  buildVaccineAgenda,
+  getNthDoseDate
+} from './healthRecords.js';
+
+export { calculateWithdrawalFromLastDose } from './healthRecords.js';
 
 // ═══════════════════════════════════════════
 // 1. İLAÇ KÜTÜPHANE BİRLEŞTİRME
@@ -241,37 +251,7 @@ export function getCriticalStocks() {
 // 5. ARINMA SÜRESİ HESAPLAMA
 // ═══════════════════════════════════════════
 
-/**
- * İlaç Arınma Süresi Hesaplar.
- * KÜR DURUMUNDA: Arınma süresi SON DOZ tarihinden itibaren başlar.
- *
- * @param {number} meatDays - Et arınma süresi (gün)
- * @param {number} milkDays - Süt arınma süresi (gün)
- * @param {string|Date} lastDoseDate - Kürün SON dozunun uygulandığı tarih
- * @returns {{ meatSafeDate, milkSafeDate, meatDaysLeft, milkDaysLeft, isMeatSafe, isMilkSafe }}
- */
-export function calculateWithdrawalFromLastDose(meatDays, milkDays, lastDoseDate) {
-  const base = new Date(lastDoseDate);
-  const now = new Date();
-
-  const meatSafe = new Date(base);
-  meatSafe.setDate(meatSafe.getDate() + (meatDays || 0));
-
-  const milkSafe = new Date(base);
-  milkSafe.setDate(milkSafe.getDate() + (milkDays || 0));
-
-  const meatDaysLeft = Math.max(0, Math.ceil((meatSafe - now) / (1000 * 60 * 60 * 24)));
-  const milkDaysLeft = Math.max(0, Math.ceil((milkSafe - now) / (1000 * 60 * 60 * 24)));
-
-  return {
-    meatSafeDate: meatSafe.toISOString().split('T')[0],
-    milkSafeDate: milkSafe.toISOString().split('T')[0],
-    meatDaysLeft,
-    milkDaysLeft,
-    isMeatSafe: meatDaysLeft === 0,
-    isMilkSafe: milkDaysLeft === 0
-  };
-}
+// calculateWithdrawalFromLastDose → core/healthRecords.js (saf fonksiyon, yukarıda re-export edilir)
 
 /**
  * Tek bir hayvanın tüm aktif arınma sürelerini hesaplar.
@@ -280,42 +260,7 @@ export function calculateWithdrawalFromLastDose(meatDays, milkDays, lastDoseDate
  * @returns {{ hasActiveWithdrawal, meatDaysLeft, milkDaysLeft, records: [] }}
  */
 export function getAnimalWithdrawalStatus(animalId) {
-  const state = getState();
-  const records = (state.treatmentRecords || []).filter(r =>
-    r.animalId === animalId || (r.batchTargets && r.batchTargets.includes(animalId))
-  );
-
-  let maxMeatDaysLeft = 0;
-  let maxMilkDaysLeft = 0;
-  let activeMedName = null;
-  const activeRecords = [];
-
-  records.forEach(r => {
-    if (!r.withdrawals) return;
-    const w = calculateWithdrawalFromLastDose(
-      r.withdrawals.meatWithdrawalDays,
-      r.withdrawals.milkWithdrawalDays,
-      r.withdrawals.lastDoseDate
-    );
-    if (w.meatDaysLeft > 0 || w.milkDaysLeft > 0) {
-      activeRecords.push({ ...r, computed: w });
-      if (w.meatDaysLeft > maxMeatDaysLeft) {
-        maxMeatDaysLeft = w.meatDaysLeft;
-        activeMedName = r.medicationName;
-      }
-      if (w.milkDaysLeft > maxMilkDaysLeft) {
-        maxMilkDaysLeft = w.milkDaysLeft;
-      }
-    }
-  });
-
-  return {
-    hasActiveWithdrawal: maxMeatDaysLeft > 0 || maxMilkDaysLeft > 0,
-    meatDaysLeft: maxMeatDaysLeft,
-    milkDaysLeft: maxMilkDaysLeft,
-    activeMedName,
-    records: activeRecords
-  };
+  return computeWithdrawalStatus(getState().treatmentRecords, animalId);
 }
 
 /**
@@ -323,25 +268,16 @@ export function getAnimalWithdrawalStatus(animalId) {
  */
 export function getAllQuarantinedAnimals() {
   const state = getState();
-  const animals = state.animals || [];
-  const quarantined = [];
+  return computeQuarantinedAnimals(state.animals, state.treatmentRecords);
+}
 
-  animals.forEach(a => {
-    const ws = getAnimalWithdrawalStatus(a.id);
-    if (ws.hasActiveWithdrawal) {
-      quarantined.push({
-        animalId: a.id,
-        breed: a.breed,
-        type: a.type,
-        group: a.group,
-        meatDaysLeft: ws.meatDaysLeft,
-        milkDaysLeft: ws.milkDaysLeft,
-        activeMedName: ws.activeMedName
-      });
-    }
-  });
-
-  return quarantined;
+/**
+ * Aşı ajandası: bekleyen aşı görevleri + yapılmış aşı kayıtları (treatmentRecords).
+ * @param {string|null} animalId - Verilirse yalnızca o hayvanı kapsayan kalemler
+ */
+export function getVaccineAgenda(animalId = null) {
+  const state = getState();
+  return buildVaccineAgenda(state.tasks, state.treatmentRecords, animalId);
 }
 
 // ═══════════════════════════════════════════
@@ -405,6 +341,7 @@ export function applyTreatment({
   // ── Tedavi kaydı (denormalize — prospektüs snapshot) ──
   const record = {
     id: `TR-REC-${Date.now()}`,
+    recordType: med.category === 'asi' ? RECORD_TYPES.VACCINE : RECORD_TYPES.TREATMENT,
     animalId: applicationType === 'single' ? animalIds[0] : null,
     medicationId: med.id,
     medicationName: med.name,
@@ -421,7 +358,7 @@ export function applyTreatment({
       currentDay: 1,
       totalDays: med.treatmentCourse?.days || 1,
       nextDoseDate: med.treatmentCourse?.days > 1
-        ? _getNextDoseDate(today, med.treatmentCourse.repeatIntervalHours)
+        ? getNthDoseDate(today, med.treatmentCourse.repeatIntervalHours, 2)
         : null
     },
     withdrawals: {
@@ -436,35 +373,23 @@ export function applyTreatment({
   };
 
   // ── State güncelleme ──
+  // Tek doğruluk kaynağı: treatmentRecords. Karantina durumu bu kayıtlardan türetilir;
+  // hayvan objesinin klinik `status` alanına DOKUNULMAZ.
   const treatmentRecords = [record, ...(state.treatmentRecords || [])];
 
-  // Hayvanların status'unu güncelle
   const animals = [...(state.animals || [])];
   animalIds.forEach(aid => {
     const idx = animals.findIndex(a => a.id === aid);
-    if (idx > -1 && (med.meatWithdrawalDays > 0 || med.milkWithdrawalDays > 0)) {
-      animals[idx] = { ...animals[idx], status: 'warning', lastVaccine: today };
+    if (idx > -1) {
+      animals[idx] = { ...animals[idx], lastVaccine: today };
     }
-  });
-
-  // Eski vaccines listesine de uyumluluk kaydı ekle
-  const vaccines = [...(state.vaccines || [])];
-  vaccines.unshift({
-    id: Date.now(),
-    name: med.name,
-    date: new Date().toLocaleDateString('tr-TR', { day: '2-digit', month: 'short', year: 'numeric' }),
-    status: 'done',
-    target: applicationType === 'single' ? animalIds[0] : `Toplu (${animalIds.length} baş)`,
-    meatDays: med.meatWithdrawalDays,
-    milkDays: med.milkWithdrawalDays,
-    dosage: appliedDosePerAnimal
   });
 
   // ── Kür görevleri oluştur ──
   const tasks = [...(state.tasks || [])];
   if (med.treatmentCourse && med.treatmentCourse.days > 1) {
     for (let day = 2; day <= med.treatmentCourse.days; day++) {
-      const doseDate = _getNthDoseDate(today, med.treatmentCourse.repeatIntervalHours, day);
+      const doseDate = getNthDoseDate(today, med.treatmentCourse.repeatIntervalHours, day);
       const targetLabel = applicationType === 'single'
         ? animalIds[0]
         : `Toplu (${animalIds.length} baş)`;
@@ -473,18 +398,20 @@ export function applyTreatment({
         id: `TSK-MED-${Date.now()}-${day}`,
         title: `💉 ${med.name} — ${day}. Doz`,
         desc: `${targetLabel} için ${med.name} kür tedavisi ${day}/${med.treatmentCourse.days}. doz uygulaması. Hayvan başı doz: ${(appliedDosePerAnimal / (med.treatmentCourse.days || 1)).toFixed(1)} ${med.unit} (Toplam sürü sarfiyatı: ${(totalBatchQuantity / (med.treatmentCourse.days || 1)).toFixed(1)} ${med.unit}).`,
-        type: 'health',
+        type: 'medicine',
         prio: 'High',
         scope: applicationType === 'single' ? 'individual' : 'herd',
         targetTag: applicationType === 'single' ? animalIds[0] : null,
         status: 'pending',
         createdAt: today,
-        dueDate: doseDate
+        dueDate: doseDate,
+        treatmentRecordId: record.id,
+        doseNumber: day
       });
     }
   }
 
-  setState({ treatmentRecords, animals, vaccines, tasks });
+  setState({ treatmentRecords, animals, tasks });
 
   return {
     success: true,
@@ -492,6 +419,61 @@ export function applyTreatment({
     record,
     stockResult
   };
+}
+
+/**
+ * Tamamlanan bir aşı/ilaç görevinden tedavi kaydı üretir (saf — state'e yazmaz).
+ * Çağıran taraf (workforceManager.completeTask) kaydı tek bir setState içinde ekler.
+ *
+ * @param {Object} task - Tamamlanan görev
+ * @param {Array} animals - Mevcut sürü (sürü geneli görevlerde hedef listesi için)
+ * @param {string} dateStr - Uygulama tarihi (ISO)
+ */
+export function buildRecordFromCompletedTask(task, animals, dateStr) {
+  const isIndividual = task.scope === 'individual' && task.targetTag;
+  const isVaccine = task.type === 'vaccine';
+  return {
+    id: `TR-REC-TSK-${Date.now()}`,
+    recordType: isVaccine ? RECORD_TYPES.VACCINE : RECORD_TYPES.TREATMENT,
+    animalId: isIndividual ? task.targetTag : null,
+    medicationId: null,
+    medicationName: task.title,
+    activeIngredient: '',
+    category: isVaccine ? 'asi' : 'diger',
+    dosage: null,
+    appliedDosePerAnimal: null,
+    dosageUnit: '',
+    applicationDate: dateStr,
+    applicationType: isIndividual ? 'single' : 'batch',
+    batchTargets: isIndividual ? [] : (animals || []).map(a => a.id),
+    targetLabel: isIndividual ? task.targetTag : 'Tüm Sürü',
+    courseInfo: { currentDay: 1, totalDays: 1, nextDoseDate: null },
+    withdrawals: null,
+    pregnancyOverride: false,
+    notes: task.desc || '',
+    sourceTaskId: task.id
+  };
+}
+
+/**
+ * Kür görevinin (N. doz) tamamlandığını ilgili tedavi kaydına işler (saf).
+ * @returns {Array} güncellenmiş treatmentRecords
+ */
+export function markCourseDoseCompleted(treatmentRecords, recordId, doseNumber) {
+  return (treatmentRecords || []).map(r => {
+    if (r.id !== recordId) return r;
+    const totalDays = r.courseInfo?.totalDays || 1;
+    const currentDay = Math.max(r.courseInfo?.currentDay || 1, doseNumber || 1);
+    return {
+      ...r,
+      courseInfo: {
+        ...r.courseInfo,
+        currentDay,
+        totalDays,
+        nextDoseDate: currentDay >= totalDays ? null : r.courseInfo?.nextDoseDate || null
+      }
+    };
+  });
 }
 
 // ═══════════════════════════════════════════
@@ -580,21 +562,4 @@ export function checkVitalAnomalies(temp, activity) {
     return { type: 'WARNING', title: 'Düşük Hareketlilik', msg: 'Hayvanda anormal durgunluk tespit edildi, gözlem altına alın.' };
   }
   return null;
-}
-
-// ═══════════════════════════════════════════
-// Yardımcı (Private)
-// ═══════════════════════════════════════════
-
-function _getNextDoseDate(fromDateStr, intervalHours) {
-  const d = new Date(fromDateStr);
-  d.setHours(d.getHours() + (intervalHours || 24));
-  return d.toISOString().split('T')[0];
-}
-
-function _getNthDoseDate(firstDateStr, intervalHours, dayNumber) {
-  const d = new Date(firstDateStr);
-  const intervalDays = (intervalHours || 24) / 24;
-  d.setDate(d.getDate() + intervalDays * (dayNumber - 1));
-  return d.toISOString().split('T')[0];
 }

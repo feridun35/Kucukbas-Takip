@@ -3,7 +3,8 @@
  * State-driven: tüm görevler state.tasks ve state.taskHistory üzerinden yönetilir.
  */
 
-import { getState, setState } from '../core/state.js';
+import { getState, setState } from './state.js';
+import { buildRecordFromCompletedTask, markCourseDoseCompleted } from './healthManager.js';
 
 /** Görev Türleri */
 export const TASK_TYPES = [
@@ -142,15 +143,18 @@ export function getTaskHistory(scope = 'all', animalTag = null) {
   return history;
 }
 
+let _taskSeq = 0;
+
 /**
- * Yeni görev ekle.
+ * Görev objesi üretir (saf — state'e yazmaz). Aynı milisaniyede üretilen görevler
+ * de benzersiz ID alır.
  * @param {Object} taskData - { title, desc, type, prio, scope, targetTag, dueDate }
  */
-export function addTask(taskData) {
-  const state = getState();
+export function buildTask(taskData) {
   const todayStr = new Date().toISOString().split('T')[0];
-  const newTask = {
-    id: 'TSK-' + Date.now(),
+  _taskSeq = (_taskSeq + 1) % 100000;
+  return {
+    id: `TSK-${Date.now()}-${_taskSeq}`,
     title: taskData.title,
     desc: taskData.desc || '',
     type: taskData.type || 'other',
@@ -161,14 +165,24 @@ export function addTask(taskData) {
     status: 'pending',
     createdAt: new Date().toLocaleDateString('tr-TR', { day: '2-digit', month: 'short', year: 'numeric' })
   };
+}
 
+/**
+ * Yeni görev ekle.
+ * @param {Object} taskData - { title, desc, type, prio, scope, targetTag, dueDate }
+ */
+export function addTask(taskData) {
+  const state = getState();
+  const newTask = buildTask(taskData);
   setState({ tasks: [newTask, ...(state.tasks || [])] });
   return newTask;
 }
 
 /**
  * Görevi tamamla: tasks → taskHistory'ye taşı.
- * Aşı/İlaç türündeyse cross-module olarak state.vaccines'a da kayıt düşer.
+ * Sağlık etkisi (cross-module) — tek kaynak state.treatmentRecords:
+ *  - Kür dozu görevi (treatmentRecordId) → ilgili tedavi kaydının kür ilerlemesi güncellenir.
+ *  - Diğer aşı/ilaç görevleri → yeni bir tedavi/aşı kaydı oluşturulur.
  * @param {string} taskId
  * @returns {{ success: boolean, message: string }}
  */
@@ -179,6 +193,7 @@ export function completeTask(taskId) {
 
   if (idx === -1) return { success: false, message: 'Görev bulunamadı.' };
 
+  const todayIso = new Date().toISOString().split('T')[0];
   const task = { ...tasks[idx] };
   task.status = 'completed';
   task.completedAt = new Date().toLocaleDateString('tr-TR', { day: '2-digit', month: 'short', year: 'numeric' });
@@ -189,20 +204,16 @@ export function completeTask(taskId) {
   // taskHistory'ye ekle
   const history = [task, ...(state.taskHistory || [])];
 
-  // Cross-module: Aşı veya İlaç türündeyse vaccines'a kayıt düş
-  let vaccines = [...(state.vaccines || [])];
-  if (task.type === 'vaccine' || task.type === 'medicine') {
-    const vaccineRecord = {
-      id: Date.now(),
-      name: task.title,
-      date: task.completedAt,
-      status: 'done',
-      target: task.scope === 'individual' && task.targetTag ? task.targetTag : 'Tüm Sürü'
-    };
-    vaccines = [vaccineRecord, ...vaccines];
+  const update = { tasks, taskHistory: history };
+
+  if (task.treatmentRecordId) {
+    update.treatmentRecords = markCourseDoseCompleted(state.treatmentRecords, task.treatmentRecordId, task.doseNumber);
+  } else if (task.type === 'vaccine' || task.type === 'medicine') {
+    const record = buildRecordFromCompletedTask(task, state.animals, todayIso);
+    update.treatmentRecords = [record, ...(state.treatmentRecords || [])];
   }
 
-  setState({ tasks, taskHistory: history, vaccines });
+  setState(update);
   return { success: true, message: `"${task.title}" görevi tamamlandı ve geçmişe kaydedildi.` };
 }
 

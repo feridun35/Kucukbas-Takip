@@ -1,6 +1,6 @@
 # ShepherdAI — Mimari Haritası
 
-> Kod tabanının mevcut hâlinin (v0.06) incelenmesiyle çıkarılmıştır. `PROJECT_STATUS.md` hedeflenen mimariyi anlatır; bu belge **kodun gerçekte nasıl bağlandığını** gösterir.
+> Kod tabanının incelenmesiyle çıkarılmıştır (v0.06 + mimari düzeltmeler). `PROJECT_STATUS.md` hedeflenen mimariyi anlatır; bu belge **kodun gerçekte nasıl bağlandığını** gösterir.
 
 ## 1. Genel Bakış
 
@@ -11,7 +11,8 @@
 | Yönlendirme | Hash tabanlı (`#dashboard`, `#herd-list` …) |
 | Kalıcılık | `localStorage` (birincil) + Supabase `farms_data` tablosu (bulut kopyası) |
 | Harici bağımlılık | Yalnızca `@supabase/supabase-js@2` (CDN, global `window.supabase`) |
-| Kod hacmi | ~11.800 satır (≈3.300 core, ≈5.700 UI, ≈2.350 CSS) |
+| Kimlik doğrulama | Supabase Auth (e-posta + şifre); demo hesabı yalnızca yerel |
+| Kod hacmi | ~11.900 satır (≈4.150 core, ≈5.150 UI, ≈2.350 CSS) |
 
 ## 2. Katmanlar
 
@@ -37,18 +38,20 @@ flowchart TB
     SYNC["syncManager.js"]
     MODAL["modal.js"]
     SENS["sensors.js"]
-    ENG["Motorlar:<br/>herdMathEngine · healthManager<br/>financeEngine · breedingManager<br/>workforceManager"]
+    ENG["Motorlar:<br/>herdMathEngine · healthManager · healthRecords<br/>herdManager · feedManager · financeEngine<br/>breedingManager · workforceManager"]
+    MIG["migrations.js<br/>(şema göçleri)"]
   end
 
   subgraph DATA["data/ — statik veri"]
     MOCK["mock-data.js"]
     MED["med-library.js"]
-    SQL["schema.sql (Supabase)"]
+    CONST["herd-constants.js · feed-catalog.js"]
+    SQL["schema.sql (Supabase + RLS)"]
   end
 
   subgraph EXT["Dış dünya"]
     LS[("localStorage")]
-    SB[("Supabase<br/>farms_data")]
+    SB[("Supabase<br/>Auth + farms_data")]
   end
 
   HTML --> APP --> UI
@@ -69,64 +72,70 @@ flowchart LR
   router["router.js"]
   auth["auth.js"]
   sync["syncManager.js"]
-  herd["herdMathEngine.js"]
+  mig["migrations.js"]
+  herdMath["herdMathEngine.js"]
+  records["healthRecords.js<br/>(saf)"]
   health["healthManager.js"]
+  herdMgr["herdManager.js"]
+  feed["feedManager.js"]
   fin["financeEngine.js"]
   breed["breedingManager.js"]
   work["workforceManager.js"]
   sens["sensors.js"]
   modal["modal.js<br/>(bağımsız)"]
-  mock["data/mock-data.js"]
-  med["data/med-library.js"]
 
-  state --> herd
+  state --> herdMath
+  state --> mig
   state <--> sync
-  state --> mock
+  mig --> herdMath
+  mig --> records
+  herdMath --> records
+  health --> records
+  health --> state
+  work --> health
+  work --> state
+  herdMgr --> state
+  herdMgr --> breed
+  feed --> state
+  fin --> state
+  breed --> state
+  sens --> state
   router --> state
   router <--> auth
   auth --> state
   auth --> sync
-  herd --> mock
-  health --> state
-  health --> med
-  fin --> state
-  fin --> mock
-  breed --> state
-  work --> state
-  sens --> state
 ```
 
-**Döngüsel bağımlılıklar** (ES modules'da çalışıyor ama kırılgan):
-- `state.js ⇄ syncManager.js` (state push/pull çağırır; sync `getState`/`applyCloudState` çağırır)
-- `router.js ⇄ auth.js` (router `isAuthenticated`, auth `navigateTo` kullanır)
-- `auth.js → state.js`, `router.js → state.js` ve `state.js → syncManager.js → state.js`
+`healthRecords.js` state'e bağımlı olmayan saf fonksiyonlardır (arınma hesabı, karantina listesi, aşı ajandası). Böylece hem her `setState`'te çalışan `herdMathEngine` hem de UI'a hizmet eden `healthManager` aynı kuralı kullanır.
+
+**Kalan döngüsel bağımlılıklar** (çalışıyor, ileride ele alınabilir): `state.js ⇄ syncManager.js`, `router.js ⇄ auth.js`.
 
 ### 3.2 UI → Core bağlantıları
 
-| UI modülü | state | auth | router | modal | health | breeding | finance | workforce | herdMath | diğer |
-|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|---|
-| `auth.js` (giriş ekranı) | | ● | ● | ● | | | | | | |
-| `dashboard.js` | ● | ● | | | ● | | | | | |
-| `herd.js` (menü) | | | ● | | | | | | | |
-| `herd-list.js` | ● | | ● | ● | ● | | | | | |
-| `animal-profile.js` | ● | | ● | ● | ● | ● | ● | ● | ● | `animalData` (mock), iki modal |
-| `breeding.js` | ● | | | ● | | ● | | | | breeding-modal |
-| `breeding-modal.js` | ● | | | | | ● | | ● | | |
-| `health.js` (menü) | | | ● | | | | | | | |
-| `health-meds.js` | ● | | | ● | ● | | | | | med-library, treatment-modal |
-| `health-ai.js` | ● | | | ● | ● | | | | | |
-| `health-vaccines.js` | ● | | | | | | | | | |
-| `health-mortality.js` | ● | | | ● | | | | | | |
-| `treatment-modal.js` | ● | | | ● | ● | | | | | med-library |
-| `finance.js` (menü) | | | ● | | | | | | | |
-| `finance-roi.js` | ● | | | ● | | | ● | | | |
-| `finance-silo.js` | ● | | | ● | | | ● | | | |
-| `finance-culling.js` | | | | | | | ● | | | |
-| `tasks.js` | ● | | | ● | | | | ● | | |
-| `profile.js` | ● | ● | | ● | | | | | | |
-| `navigation.js` | | | ● | | | | | | | syncManager (durum rozeti) |
+| UI modülü | state | auth | router | modal | health | herdMgr | feed | breeding | finance | workforce | diğer |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|---|
+| `auth.js` (giriş ekranı) | | ● | ● | ● | | | | | | | |
+| `dashboard.js` | ● | ● | | | ● | | | | | | |
+| `herd.js` (menü) | | | ● | | | | | | | | |
+| `herd-list.js` | ● | | ● | ● | ● | ● | | | | | herd-constants |
+| `animal-profile.js` | ● | | ● | ● | ● | ● | | ● | ● | ● | healthRecords, `animalData` (mock), iki modal |
+| `breeding.js` | ● | | | ● | | | | ● | | | breeding-modal |
+| `breeding-modal.js` | ● | | | | | | | ● | | ● | |
+| `health.js` (menü) | | | ● | | | | | | | | |
+| `health-meds.js` | ● | | | ● | ● | | | | | | med-library, treatment-modal |
+| `health-ai.js` | ● | | | ● | ● | | | | | | |
+| `health-vaccines.js` | | | | | ● | | | | | | |
+| `health-mortality.js` | ● | | | ● | | ● | | | | | herd-constants |
+| `treatment-modal.js` | ● | | | ● | ● | | | | | | med-library |
+| `finance.js` (menü) | | | ● | | | | | | | | |
+| `finance-roi.js` | ● | | | ● | | | | | ● | | |
+| `finance-silo.js` | ● | | | ● | | | ● | | ● | | feed-catalog |
+| `finance-culling.js` | | | | | | | | | ● | | |
+| `tasks.js` | ● | | | ● | | | | | | ● | |
+| `profile.js` | ● | ● | | ● | | | | | | | |
+| `navigation.js` | | | ● | | | | | | | | syncManager (durum rozeti) |
 
-`animal-profile.js` (1.204 satır) uygulamanın **merkez düğümü**: neredeyse tüm motorlara bağlı.
+`animal-profile.js` hâlâ uygulamanın **merkez düğümü**dür ama artık state'e doğrudan yazmaz; tüm mutasyonlar `herdManager` / `healthManager` / `workforceManager` üzerinden geçer.
 
 ### 3.3 Sayfa akışı (navigasyon)
 
@@ -149,51 +158,50 @@ Router koruması: oturum yoksa her rota `#auth`'a, oturum varken `#auth` → `#d
 
 ## 4. Veri Katmanı: AppState
 
-### 4.1 State şeması (`core/state.js` → `EMPTY_STATE_TEMPLATE`)
+### 4.1 State şeması (`core/state.js` → `EMPTY_STATE_TEMPLATE`, şema v2)
 
 ```
 AppState
-├── Oturum / UI (buluta gönderilmez*)
-│   ├── currentPage, currentUser, currentTenantKey
-│   └── focusMode ('meat'|'milk'|'breed'), userRole ('owner'|'worker'), activeAnimalId
-├── Ham veri (kullanıcı/motorların yazdığı)
-│   ├── animals[]            ← sürünün çekirdeği; neredeyse her şey buna referans verir
-│   ├── treatmentRecords[]   ← yeni tedavi sistemi (arınma süreleri burada)
-│   ├── vaccines[]           ← ESKİ uyumluluk listesi (hâlâ okunuyor/yazılıyor)
+├── schemaVersion: 2                      ← core/migrations.js
+├── Oturum anahtarları (hiçbir yere yazılmaz)
+│   └── currentPage, currentUser, currentTenantKey
+├── Cihaz-yerel anahtarlar (localStorage'a yazılır, buluta GİTMEZ, buluttan EZİLMEZ)
+│   └── activeAnimalId, userRole, sensors
+├── Çiftlik verisi (localStorage + bulut)
+│   ├── focusMode
+│   ├── animals[]            ← status = yalnızca klinik durum ('good'|'warning'|'danger')
+│   ├── treatmentRecords[]   ← TEK sağlık kaynağı: ilaç + aşı (recordType: 'treatment'|'vaccine')
 │   ├── pharmacyStock[], customMedications[]
-│   ├── tasks[], taskHistory[]
+│   ├── tasks[], taskHistory[]   ← bekleyen aşılar = tasks (type: 'vaccine')
 │   ├── breedingRecords[]
 │   ├── feedInventory[], feedHistory[]
 │   ├── mortalityRecords[]
-│   ├── alerts[]             ← yalnızca demo verisinden gelir, yazan kod yok
-│   └── sensors{}
-└── Türetilmiş özetler (her setState'te yeniden hesaplanır)
-    ├── herdSummary      ← herdMathEngine.calculateHerdSummaryStats(animals)
-    ├── healthSummary    ← calculateHealthSummaryStats(animals, vaccines)
+│   └── alerts[]             ← yalnızca demo verisinden gelir, yazan kod yok
+└── Türetilmiş özetler (her setState'te yeniden hesaplanır, buluta gitmez)
+    ├── herdSummary      ← calculateHerdSummaryStats(animals)
+    ├── healthSummary    ← calculateHealthSummaryStats(animals, treatmentRecords, tasks)
     └── financeSummary   ← calculateHerdFeedMetrics(animals, feedInventory)
 ```
-\* `currentPage/currentUser/currentTenantKey` localStorage ve buluta yazılan payload'dan çıkarılır.
+
+Eski `vaccines[]` listesi kaldırıldı. Eski formatta gelen veri (localStorage, bulut veya demo tohumu) `migrateTenantData()` ile otomatik dönüştürülür: yapılmış aşılar → `treatmentRecords`, bekleyenler → `tasks`, `applyTreatment`'ın ürettiği kopyalar atlanır. Göç idempotenttir.
 
 ### 4.2 Kim neyi yazıyor? (yazma sahipliği)
 
-| State alanı | Yazan modüller |
+| State alanı | Yazan core fonksiyonları |
 |---|---|
-| `animals` | `healthManager.applyTreatment`, `animal-profile` (odak, VKS, ağırlık, doğum, ölüm), `herd-list` (yeni hayvan), `health-mortality` |
-| `treatmentRecords` | `healthManager.applyTreatment` |
-| `vaccines` | `healthManager.applyTreatment`, `workforceManager.completeTask` |
+| `animals` | `herdManager` (`addAnimal`, `updateAnimal`, `registerBirth`, `recordDeath`), `healthManager.applyTreatment` (`lastVaccine`) |
+| `treatmentRecords` | `healthManager.applyTreatment`, `workforceManager.completeTask` (aşı/ilaç görevi → kayıt, kür dozu → ilerleme) |
 | `pharmacyStock` | `healthManager` (`deductFromStock`, `addPharmacyStock`, `markStockAsWaste`) |
 | `customMedications` | `healthManager.addCustomMedication` |
 | `tasks` | `workforceManager.addTask/completeTask`, `healthManager.applyTreatment` (kür dozları), `breeding-modal` → `addTask(syncBreedingTasks())` |
-| `taskHistory` | `workforceManager.completeTask`, `animal-profile` & `health-mortality` (ölüm kaydı) |
-| `breedingRecords` | `breeding-modal`, `animal-profile` (doğum → `recordBirth`) |
-| `feedInventory/feedHistory` | `finance-silo` |
-| `mortalityRecords` | `animal-profile`, `health-mortality` |
+| `taskHistory` | `workforceManager.completeTask`, `herdManager.recordDeath` |
+| `breedingRecords` | `breeding-modal`, `herdManager.registerBirth` |
+| `feedInventory/feedHistory` | `feedManager` (`addFeedStock`, `deductDailyHerdFeed`, `deductFeed`, `applyRation`) |
+| `mortalityRecords` | `herdManager.recordDeath` |
 | `sensors` | `sensors.js` (60 sn'de bir) |
-| `focusMode` / `userRole` / `activeAnimalId` / `currentPage` | `dashboard` / `profile` / `herd-list` / `router` |
+| `focusMode` / `userRole` / `activeAnimalId` / `currentPage` | `dashboard` / `profile` / `herd-list` + `herdManager` / `router` |
 
 ### 4.3 Çapraz (cross-module) veri akışları
-
-Sistemlerin birbirine bağlandığı asıl noktalar bunlar:
 
 ```mermaid
 flowchart LR
@@ -202,46 +210,47 @@ flowchart LR
   end
   AT -->|stok düşer| PS[(pharmacyStock)]
   AT -->|kayıt| TR[(treatmentRecords)]
-  AT -->|status='warning'| AN[(animals)]
-  AT -->|uyumluluk kaydı| VC[(vaccines)]
-  AT -->|kür 2..N. doz görevleri| TK[(tasks)]
+  AT -->|kür 2..N. doz görevleri<br/>treatmentRecordId ile| TK[(tasks)]
+
+  subgraph Görevler
+    CT["workforceManager.completeTask()"] -->|taşı| TH[(taskHistory)]
+    CT -->|kür dozu → courseInfo.currentDay<br/>aşı/ilaç görevi → yeni kayıt| TR
+  end
+  TK --> CT
 
   subgraph Üreme
     BM["breeding-modal"] -->|createMatingRecord| BR[(breedingRecords)]
     BM -->|syncBreedingTasks → addTask ×4| TK
-    APB["animal-profile: Doğum Bildir"] -->|recordBirth| BR
-    APB -->|yavru eklenir| AN
+    RB["herdManager.registerBirth()"] -->|recordBirth| BR
+    RB -->|yavru eklenir, ana → Sağmal| AN[(animals)]
   end
-
-  subgraph Görevler
-    CT["workforceManager.completeTask()"] -->|taşı| TH[(taskHistory)]
-    CT -->|type vaccine/medicine ise| VC
-  end
-  TK --> CT
 
   subgraph Ölüm
-    MORT["health-mortality / animal-profile"] -->|hayvanı çıkar| AN
-    MORT --> MR[(mortalityRecords)]
-    MORT --> TH
+    RD["herdManager.recordDeath()"] -->|hayvanı çıkar| AN
+    RD --> MR[(mortalityRecords)]
+    RD --> TH
   end
 
-  AN & VC & FI[(feedInventory)] --> HME["herdMathEngine.syncHerdMathState()"]
+  TR --> HR["healthRecords<br/>(karantina, ajanda)"]
+  AN --> HR
+  TK --> HR
+  HR --> HME["herdMathEngine.syncHerdMathState()"]
+  AN & FI[(feedInventory)] --> HME
   HME --> SUM[(herd/health/financeSummary)]
-  TR --> Q["healthManager.getAllQuarantinedAnimals()"] --> DASH["dashboard karantina widget"]
-  SUM --> DASH
+  HR --> DASH["dashboard karantina widget · aşı ajandası · hayvan sağlık sekmesi"]
 ```
 
-## 5. Yaşam Döngüsü ve Senkronizasyon
+## 5. Yaşam Döngüsü, Reaktiflik ve Senkronizasyon
 
 ### 5.1 Açılış sırası (`app.js → initApp`)
 
 1. `initSyncManager()` — online/offline/focus/visibility dinleyicileri + **6 sn'de bir** bulut kontrolü (`checkForCloudUpdates`).
-2. `syncUsersFromCloud()` — kullanıcı listesini bulutla birleştirir (async, beklenmez).
-3. Oturum varsa `loadTenantState(user)` — localStorage'dan yükle → arka planda buluttan çek.
-4. 17 rota kaydı → `renderNavBar()` → `initRouter()`.
-5. `startSensorPolling(60000)`.
+2. Oturum varsa `loadTenantState(user)` — localStorage'dan yükle → göç → (demo değilse) arka planda buluttan çek.
+3. 17 rota kaydı → `renderNavBar()` → `initRouter()` (router state'e abone olur).
+4. `startSensorPolling(60000)`.
+5. `verifySession()` — çevrimiçiyken Supabase oturumu yoksa ya da eski sürüm oturumuysa çıkış yapılır.
 
-### 5.2 `setState()` bir kez çağrıldığında olanlar
+### 5.2 `setState()` ve bildirim kaynakları
 
 ```mermaid
 sequenceDiagram
@@ -251,53 +260,77 @@ sequenceDiagram
   participant L as localStorage
   participant Y as syncManager
   participant C as Supabase
+  participant R as router
 
   UI->>S: setState(partial)
-  S->>S: sığ birleştirme (obje → merge, dizi → değiştir)
-  S->>H: syncHerdMathState(AppState) — özetleri yeniden hesapla
-  S->>L: shepherd_data_<id> ← tüm state (JSON)
-  alt sadece sensors değilse VE ilk bulut yüklemesi bitti ise
-    S->>Y: pushLocalStateToCloud (1.2 sn debounce)
-    Y->>C: upsert farms_data(tenant_key, farm_payload)
+  alt yalnızca oturum anahtarı (currentPage)
+    S-->>R: notify {source:'local'} (kayıt/push yok)
+  else
+    S->>H: syncHerdMathState — özetleri yeniden hesapla
+    S->>L: shepherd_data_<id> ← yerel yük
+    opt çiftlik verisi değiştiyse VE demo değilse VE ilk bulut yüklemesi bittiyse
+      S->>Y: pushLocalStateToCloud (1.2 sn debounce)
+      Y->>C: upsert (JWT ile, owner_id = auth.uid())
+    end
+    S-->>R: notify {source:'local' | 'sensors'}
   end
-  S->>S: _notifySubscribers(getState() derin kopya)
+
+  Note over Y,C: Başka cihazdan değişiklik
+  Y->>C: 6 sn'de bir / sekme odağında kontrol
+  C-->>Y: farm_payload (updated_at farklı)
+  Y->>S: applyCloudState (göç + cihaz-yerel anahtarlar korunur)
+  S-->>R: notify {source:'cloud'}
+  R->>R: refreshCurrentRoute() — modal açık / alana yazılıyorsa ertelenir
 ```
 
-### 5.3 Multi-tenant ve bulut modeli
+Bildirimler `{ source, keys }` meta bilgisi taşır: `local`, `cloud`, `load`, `sensors`, `reset`. Router yalnızca `cloud` kaynağında açık sayfayı yeniden çizer (scroll konumu korunur); yerel işlemlerde sayfalar kendi yeniden çizimlerini yapar. Kendi yaptığımız push'un `updated_at` değeri sunucudan okunur, böylece kendi yazdığımız veri "başka cihazdan güncelleme" sanılmaz; gönderilmeyi bekleyen yerel değişiklik varken bulut verisi uygulanmaz.
+
+### 5.3 Kimlik doğrulama ve bulut güvenlik modeli
+
+| Katman | Davranış |
+|---|---|
+| Hesaplar | Supabase Auth (`signInWithPassword`, `signUp`). Şifreler yalnızca Supabase'de bcrypt hash olarak tutulur. İstemcide şifre saklanmaz. |
+| Oturum | supabase-js token'ı kendi yönetir. Uygulama profili (şifresiz) `shepherd_current_user` anahtarında tutulur, böylece uygulama çevrimdışı da açılır. |
+| Kiracı anahtarı | `shepherd_data_<auth.uid()>`. |
+| Veritabanı | `farms_data(tenant_key, owner_id, farm_payload, updated_at)`. RLS: kullanıcı yalnızca `owner_id = auth.uid()` satırını okuyup yazar, `tenant_key` biçimi zorlanır. Anon rol hiçbir satıra erişemez. |
+| Demo | `loginAsDemo()` ile şifresiz açılır, veri yalnızca bu cihazda tutulur, buluta hiç istek atılmaz (durum rozeti: 💾 Yalnızca Bu Cihaz). |
+| Eski hesaplar | `schema.sql` eski kullanıcı listesini istemcinin erişemediği `legacy_users` tablosuna bcrypt hash olarak taşır ve düz metin satırını siler. Kullanıcı aynı e-postayla giriş/kayıt olduğunda `claim_legacy_farm(eski_şifre)` eski çiftlik satırını yeni hesaba bağlar. Bu cihazda eski kayıt varsa giriş sırasında hesap otomatik oluşturulur ve yerel veri yeni anahtara kopyalanır. |
 
 | localStorage anahtarı | İçerik |
 |---|---|
-| `shepherd_current_user` | Aktif kullanıcı objesi (oturum = bu anahtarın varlığı) |
-| `shepherd_users_registry` | Tüm kullanıcılar (yerel) |
-| `shepherd_data_<userId>` | Kiracının tüm çiftlik state'i (demo: `shepherd_data_demo`) |
+| `shepherd_current_user` | Aktif kullanıcı profili (şifresiz) |
+| `shepherd_data_<uid>` / `shepherd_data_demo` | Kiracının çiftlik state'i |
 | `shepherd_pending_sync_queue` | Çevrimdışıyken son bekleyen push (tek kayıt) |
-
-Supabase'de **tek tablo** var: `farms_data(tenant_key UNIQUE, farm_payload JSONB, updated_at)`. Her satır bir kiracının **tüm state'inin tek JSON blob'u**. Ek olarak `tenant_key = 'shepherd_global_users_registry'` satırı tüm kullanıcı listesini tutar.
-
-Çakışma stratejisi: **son yazan kazanır** (alan bazlı birleştirme yok). `isCloudLoadDone` kilidi, buluttan ilk çekme bitmeden bayat yerel verinin buluta yazılmasını engeller.
+| `sb-<proje>-auth-token` | Supabase oturum token'ı (supabase-js yönetir) |
+| `shepherd_users_registry` | *Eski sürüm.* Yalnızca göç için okunur, göç tamamlanınca silinir. |
 
 ## 6. Motorların Sorumlulukları
 
 | Motor | Ana fonksiyonlar | Not |
 |---|---|---|
-| `herdMathEngine` | `syncHerdMathState`, yem DMI hesabı, `parseDate` (TR tarih ayrıştırma) | Her `setState`'te çalışır. `calculateHerdMedicationStatus` hiçbir yerden çağrılmıyor. |
-| `healthManager` | İlaç kütüphanesi birleştirme, dozaj, gebelik riski, stok (FIFO düşüş), arınma süresi, karantina listesi, `applyTreatment`, semptom değerlendirme (AI teşhis) | En büyük ve en çok bağlantılı motor (600 satır). |
-| `breedingManager` | Gebelik kilometre taşları, akrabalık riski, eşleştirme kaydı, görev üretimi, doğum kaydı, uyum skoru | Saf fonksiyonlar; state'e kendisi yazmaz, UI yazar. |
-| `workforceManager` | Görev CRUD, tarih filtreleme/sıralama, tamamlama → geçmiş, sensör acil durum kuralları | `completeTask` → `vaccines` çapraz yazımı. |
-| `financeEngine` | Hayvan/sürü ROI, silo tükenme, ayıklama listesi | Sabit/mock değerler (alış 2800 ₺, veteriner 450 ₺, `marketPrices`) ve `Math.random()` sparkline. |
+| `healthRecords` | Arınma hesabı, hayvan bazlı arınma durumu, karantina listesi, aşı ajandası, kür doz tarihi | Saf; state'e bağımlı değil. |
+| `healthManager` | İlaç kütüphanesi birleştirme, dozaj, gebelik riski, stok (FIFO düşüş), `applyTreatment`, görevden kayıt üretme, semptom değerlendirme | En büyük sağlık motoru. |
+| `herdManager` | `addAnimal` (küpe tekilliği), `updateAnimal`, `registerBirth`, `recordDeath`, kayıp tahmini | Önceden UI'da dağınık olan sürü yaşam döngüsü. |
+| `feedManager` | Yem girişi (ağırlıklı ortalama fiyat), günlük sürü yemlemesi, manuel çıkış, rasyon | Önceden `finance-silo.js` içindeydi. |
+| `herdMathEngine` | `syncHerdMathState`, yem DMI hesabı, `parseDate` (TR tarih ayrıştırma) | Her `setState`'te çalışır. |
+| `breedingManager` | Gebelik kilometre taşları, akrabalık riski, eşleştirme kaydı, görev üretimi, doğum kaydı, uyum skoru | Saf fonksiyonlar. |
+| `workforceManager` | Görev CRUD, tarih filtreleme/sıralama, tamamlama → geçmiş + sağlık kaydı | `completeTask` → `treatmentRecords`. |
+| `financeEngine` | Hayvan/sürü ROI, silo tükenme, ayıklama listesi | Sabit/mock değerler ve `Math.random()` sparkline. |
+| `migrations` | `migrateTenantData` (v1 → v2) | Yükleme ve bulut uygulamasında çalışır. |
 | `sensors` | Demo'da sabit telemetri, diğerlerinde "bağlantı yok" | `connectWebSocket` boş iskelet. |
-| `modal` | `showAlert/Confirm/Prompt/FormModal/Select` (Promise tabanlı) | Diğer hiçbir modüle bağımlı değil. |
+| `modal` | `showAlert/Confirm/Prompt/FormModal/Select` (Promise tabanlı) | Bağımsız. |
 
-## 7. Mimari Gözlemler (harita çıkarırken fark edilenler)
+## 7. Mimari Gözlemler
 
-Ayrıntılı eksik analizi sonraya bırakıldı; burada yalnızca **bağlantı yapısını etkileyen** noktalar listelenmiştir.
+### Çözülenler
 
-1. **Reaktiflik fiilen yok.** `subscribe()` mevcut ama hiçbir UI modülü abone olmuyor (`dashboard.js` import ediyor, kullanmıyor). Başka cihazdan gelen bulut güncellemesi (`applyCloudState`) state'i değiştiriyor ama açık sayfa yeniden çizilmiyor; sayfalar ya kendi `_rerender()`'larını çağırıyor ya da navigasyonla tazeleniyor.
-2. **İki paralel sağlık kaydı:** `treatmentRecords` (yeni, arınma tarihleriyle) ve `vaccines` (eski). `applyTreatment` ikisine de yazıyor; `healthSummary` ve `health-vaccines` eskisini, karantina widget'ı yenisini okuyor → aynı soruya iki kaynak.
-3. **İki karantina tanımı:** `healthSummary.quarantine` = `animals.status === 'warning'` sayısı; dashboard widget'ı = `treatmentRecords`'tan hesaplanan aktif arınma. `status` tedaviyle `warning`'e çekiliyor ama arınma bitince geri alan kod yok.
-4. **İş mantığı UI'a sızmış:** ölüm kaydı mantığı hem `animal-profile.js` hem `health-mortality.js` içinde ayrı ayrı; doğum kaydı (yavru oluşturma) `animal-profile.js` içinde; yem stoğu işlemleri `finance-silo.js` içinde. `PROJECT_STATUS.md`'deki "hesaplama yalnızca core'da" kuralı bu noktalarda ihlal ediliyor.
-5. **Her `setState` maliyetli:** özet yeniden hesaplama + tüm state'in JSON'a yazılması + `getState()` derin kopyası. Router her sayfa geçişinde `setState({currentPage})` çağırdığı için gezinme bile buluta push tetikliyor.
-6. **Döngüsel importlar** (`state⇄sync`, `router⇄auth`) — şimdilik çalışıyor, ama modül başlatma sırası değişirse kırılabilir.
+1. ~~Reaktiflik yok~~ → Router state'e abone; bulut güncellemesi açık sayfayı yeniden çiziyor (modal/form kullanımında erteleniyor). Cihaz-yerel anahtarlar buluttan ezilmiyor.
+2. ~~İki paralel sağlık kaydı / iki karantina tanımı~~ → `treatmentRecords` tek kaynak; karantina her yerde `healthRecords.computeQuarantinedAnimals` ile hesaplanıyor; tedavi `animal.status`'a dokunmuyor.
+3. ~~İş mantığı UI'a sızmış~~ → ölüm, doğum, hayvan ekleme/güncelleme `herdManager`'a, yem deposu `feedManager`'a taşındı; sabit listeler `data/` altında.
+4. ~~Güvenlik açığı~~ → Supabase Auth + sahiplik bazlı RLS; düz metin şifre listesi kaldırıldı; `admin/admin` girişi kaldırıldı, demo yerel.
+
+### Açık olanlar (sonraki inceleme)
+
+5. **Her `setState` maliyetli:** özet yeniden hesaplama + tüm state'in JSON'a yazılması + `getState()` derin kopyası. Oturum anahtarları artık bu yolu atlıyor.
+6. **Döngüsel importlar** (`state⇄sync`, `router⇄auth`).
 7. **Mock verisine kalıcı bağlar:** `financeEngine` ve `herdMathEngine` fiyatları `mock-data.marketPrices`'tan, `animal-profile` eksik alanları `mock-data.animalData`'dan dolduruyor.
-8. **Görev tipi tutarsızlığı:** `applyTreatment` kür görevlerini `type: 'health'` ile oluşturuyor; `TASK_TYPES`'ta `health` yok (`medicine` var).
-9. **⚠️ Güvenlik (kritik):** Kullanıcı listesi **düz metin şifrelerle** `shepherd_global_users_registry` satırında tutuluyor; `schema.sql`'deki RLS politikası anon anahtara tam okuma/yazma veriyor ve anahtar istemci kodunda. Yani anahtarı gören herkes tüm kullanıcıların şifrelerini ve tüm çiftlik verilerini okuyup değiştirebilir. Demo/admin girişi de kodda sabit (`admin/admin`). Eksikler ele alınırken ilk sıraya konmalı.

@@ -3,8 +3,10 @@
  * Ölen hayvanların geçmiş kayıtlarını tutar, ölüm nedenlerini ve finansal kayıpları analiz eder.
  */
 
-import { getState, setState } from '../core/state.js';
-import { showAlert, showPrompt, showFormModal, showSelect, showConfirm } from '../core/modal.js';
+import { getState } from '../core/state.js';
+import { showAlert, showFormModal, showSelect } from '../core/modal.js';
+import { recordDeath, estimateLossFromWeight } from '../core/herdManager.js';
+import { DEATH_REASONS } from '../data/herd-constants.js';
 
 let _container = null;
 
@@ -92,84 +94,36 @@ export function init() {
       }
 
       const defaultTag = animalToDie ? animalToDie.id : '';
-      const defaultWeight = animalToDie ? (animalToDie.weight || 45) : '';
-      const defaultLoss = animalToDie ? Math.round((parseFloat(animalToDie.weight || 45) * 190)) : '';
+      const defaultWeight = animalToDie ? (animalToDie.weight || '') : '';
+      const defaultLoss = animalToDie ? estimateLossFromWeight(animalToDie.weight) : '';
 
       const form = await showFormModal('Ölüm Kaydı Oluştur', [
         { id: 'tagID', label: 'Hayvan Küpe No', type: 'text', value: defaultTag, placeholder: 'Örn: TR-109' },
         { id: 'deathDate', label: 'Ölüm Tarihi', type: 'date', value: new Date().toISOString().split('T')[0] },
-        { id: 'reason', label: 'Ölüm Sebebi / Teşhis', type: 'select', options: [
-          'Enterotoksemi (Çelerme)',
-          'Pnömoni (Zatürre / Solunum)',
-          'Şap Hastalığı',
-          'Mastitis (Meme İltihabı)',
-          'Doğum Komplikasyonu',
-          'Zehirlenme / Yem Şişmesi',
-          'Kaza / Yaralanma / Kırık',
-          'Yaşlılık / Ecel',
-          'Diğer / Bilinmeyen'
-        ]},
+        { id: 'reason', label: 'Ölüm Sebebi / Teşhis', type: 'select', options: DEATH_REASONS },
         { id: 'lastWeight', label: 'Son Canlı Ağırlık (kg)', type: 'number', value: defaultWeight, placeholder: 'Örn: 55' },
-        { id: 'financialLoss', label: 'Tahmini Finansal Kayıp (₺)', type: 'number', value: defaultLoss, placeholder: 'Örn: 4500' },
+        { id: 'financialLoss', label: 'Tahmini Finansal Kayıp (₺)', type: 'number', value: defaultLoss, placeholder: 'Boş bırakılırsa ağırlıktan hesaplanır' },
         { id: 'note', label: 'Açıklama / Not', type: 'text', placeholder: 'Olayla ilgili gözlemler...' }
       ], '☠️');
 
-      if (form && form.tagID && form.tagID.trim() !== '') {
-        const tagID = form.tagID.trim();
-        const deathDate = form.deathDate || new Date().toISOString().split('T')[0];
-        const reason = form.reason || 'Diğer / Bilinmeyen';
-        const lastWeight = parseFloat(form.lastWeight) || (animalToDie ? parseFloat(animalToDie.weight || 0) : 0);
-        const loss = parseFloat(form.financialLoss) || (lastWeight > 0 ? (lastWeight * 190) : 3500);
+      if (!form || !form.tagID || form.tagID.trim() === '') return;
 
-        const newRecord = {
-          id: 'MORT-' + Date.now(),
-          animalId: tagID,
-          rfid: animalToDie ? animalToDie.rfid : 'RFID-' + Math.floor(Math.random() * 90000 + 10000),
-          breed: animalToDie ? animalToDie.breed : 'Merinos',
-          type: animalToDie ? animalToDie.type : 'Koyun',
-          gender: animalToDie ? animalToDie.gender : 'Dişi',
-          group: animalToDie ? animalToDie.group : 'Besi',
-          lastWeight: lastWeight,
-          deathDate: deathDate,
-          deathReason: reason,
-          financialLoss: loss,
-          note: form.note || ''
-        };
+      const result = recordDeath({
+        animalId: form.tagID,
+        deathDate: form.deathDate,
+        reason: form.reason,
+        lastWeight: form.lastWeight,
+        financialLoss: form.financialLoss,
+        note: form.note
+      });
 
-        // Canlı sürüden çıkar (varsa)
-        const updatedAnimals = [...animals];
-        const idx = updatedAnimals.findIndex(a => a.id === tagID);
-        if (idx > -1) {
-          updatedAnimals.splice(idx, 1);
-        }
-
-        const updatedMortality = [newRecord, ...(state.mortalityRecords || [])];
-
-        // Görev geçmişine de ekle
-        const taskHistory = [...(state.taskHistory || [])];
-        taskHistory.unshift({
-          id: 'DEATH-' + Date.now(),
-          title: `Ölüm Kaydı: ${tagID}`,
-          desc: `Ölüm sebebi: ${reason}. Tahmini kayıp: ${loss}₺.`,
-          type: 'other',
-          prio: 'High',
-          scope: 'individual',
-          targetTag: tagID,
-          status: 'completed',
-          createdAt: deathDate,
-          completedAt: deathDate
-        });
-
-        setState({
-          animals: updatedAnimals,
-          mortalityRecords: updatedMortality,
-          taskHistory
-        });
-
-        await showAlert('Ölüm Kaydı Alındı', `${tagID} numaralı hayvan ölüm raporlarına eklendi.${idx > -1 ? ' Canlı sürü listesinden düşüldü.' : ''}`, '😢');
-        
-        _rerender();
+      if (!result.success) {
+        await showAlert('Kayıt Yapılamadı', result.message, '⚠️');
+        return;
       }
+
+      await showAlert('Ölüm Kaydı Alındı', result.message, '😢');
+      _rerender();
     });
   }
 }

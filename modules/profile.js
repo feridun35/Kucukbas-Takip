@@ -180,7 +180,7 @@ export function init() {
     btnLogout.addEventListener('click', async () => {
       const answer = await showConfirm('Sistemden Çıkış', 'Hesabınızdan çıkmak ve oturumu kapatmak istediğinize emin misiniz?', '🚪');
       if (answer) {
-        logout();
+        await logout();
       }
     });
   }

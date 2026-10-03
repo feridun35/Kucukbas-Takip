@@ -3,8 +3,13 @@
  * Offline-First hibrit mimari:
  * 1. İlk bulut yüklemesi tamamlanana kadar bayat verilerin bulutu ezmesini önleyen kilit sistemi (isCloudLoadDone).
  * 2. Kiracı bazlı bağımsız debounce timers (Çakışma önleyici).
- * 3. Anlık (Immediate) push desteği (Kullanıcı kayıtları için).
- * 4. Otomatik arka plan periyodik kontrolü & sekme odaklanma senkronizasyonu (PC & Mobil canlı eşitleme).
+ * 3. Otomatik arka plan periyodik kontrolü & sekme odaklanma senkronizasyonu (PC & Mobil canlı eşitleme).
+ *
+ * ── Güvenlik Modeli ──
+ * Tüm istekler Supabase Auth oturumunun JWT'si ile yapılır. farms_data tablosundaki RLS politikaları
+ * her kullanıcının yalnızca kendi satırını (owner_id = auth.uid()) okuyup yazmasına izin verir.
+ * İstemcideki publishable key tek başına hiçbir veriye erişim sağlamaz.
+ * Kiracı anahtarı her zaman `shepherd_data_<auth.uid()>` biçimindedir.
  */
 
 import { getState, applyCloudState } from './state.js';
@@ -12,20 +17,22 @@ import { getState, applyCloudState } from './state.js';
 const SUPABASE_URL = 'https://wuugnytpkhmrazyrdrkb.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_8paErPGpe2zZ1N1wFOiOeg_aNLfom0o';
 const PENDING_SYNC_KEY = 'shepherd_pending_sync_queue';
+const TENANT_KEY_PREFIX = 'shepherd_data_';
 
 // Senkronizasyon Durumları
 export const SYNC_STATUS = {
   SYNCED: 'synced',    // 🟢 Bulut Güncel
   SYNCING: 'syncing',  // 🟡 Senkronize Ediliyor...
   OFFLINE: 'offline',  // ⚪ Çevrimdışı (Yerel Kayıt)
-  ERROR: 'error'       // 🔴 Senkronizasyon Hatası
+  ERROR: 'error',      // 🔴 Senkronizasyon Hatası
+  LOCAL: 'local'       // 💾 Yalnızca Yerel (Demo hesabı)
 };
 
 let _supabaseClient = null;
 const _debounceTimers = new Map();
+const _pendingPayloads = new Map();
 let _currentStatus = navigator.onLine ? SYNC_STATUS.SYNCED : SYNC_STATUS.OFFLINE;
 const _statusSubscribers = new Set();
-let _lastPendingState = null;
 let _lastCloudUpdatedAt = null;
 let _autoPollInterval = null;
 
@@ -44,15 +51,22 @@ export function isCloudLoadDone(tenantKey) {
   return _cloudLoadDoneSet.has(tenantKey);
 }
 
+/** Supabase kullanıcı kimliğinden kiracı anahtarı üretir */
+export function tenantKeyForUserId(userId) {
+  return `${TENANT_KEY_PREFIX}${userId}`;
+}
+
 /**
- * Supabase İstemcisini Başlatır
+ * Supabase İstemcisini Başlatır (CDN yüklenmemişse — örn. çevrimdışı açılış — null döner)
  */
-function getSupabaseClient() {
+export function getSupabaseClient() {
   if (_supabaseClient) return _supabaseClient;
 
   if (window.supabase && typeof window.supabase.createClient === 'function') {
     try {
-      _supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+      _supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
+        auth: { persistSession: true, autoRefreshToken: true }
+      });
       console.log('[SyncManager] ☁️ Supabase JS Client başarıyla başlatıldı.');
     } catch (err) {
       console.error('[SyncManager] Supabase client başlatılamadı:', err);
@@ -62,6 +76,24 @@ function getSupabaseClient() {
   }
 
   return _supabaseClient;
+}
+
+/** Aktif Supabase oturumu (yoksa null) */
+async function _getSession() {
+  const client = getSupabaseClient();
+  if (!client) return null;
+  try {
+    const { data } = await client.auth.getSession();
+    return data?.session || null;
+  } catch (e) {
+    console.error('[SyncManager] Oturum okunamadı:', e);
+    return null;
+  }
+}
+
+/** Kiracı anahtarı oturumdaki kullanıcıya mı ait? (RLS ile aynı kural, istemci tarafı ön kontrol) */
+function _isOwnTenant(session, tenantKey) {
+  return Boolean(session?.user?.id) && tenantKey === tenantKeyForUserId(session.user.id);
 }
 
 /**
@@ -86,18 +118,31 @@ export function getSyncStatusInfo() {
       return { status: SYNC_STATUS.OFFLINE, icon: '⚪', text: 'Çevrimdışı', color: 'var(--color-text-muted, #94a3b8)' };
     case SYNC_STATUS.ERROR:
       return { status: SYNC_STATUS.ERROR, icon: '🔴', text: 'Eşitleme Hatası', color: 'var(--color-danger, #ef4444)' };
+    case SYNC_STATUS.LOCAL:
+      return { status: SYNC_STATUS.LOCAL, icon: '💾', text: 'Yalnızca Bu Cihaz', color: 'var(--color-text-muted, #94a3b8)' };
     default:
       return { status: SYNC_STATUS.OFFLINE, icon: '⚪', text: 'Çevrimdışı', color: 'var(--color-text-muted, #94a3b8)' };
   }
 }
 
-function setSyncStatus(status) {
+export function setSyncStatus(status) {
   if (_currentStatus !== status) {
     _currentStatus = status;
     const info = getSyncStatusInfo();
     _statusSubscribers.forEach(cb => {
       try { cb(info); } catch (e) { console.error('[SyncManager] Callback error:', e); }
     });
+  }
+}
+
+/** Kiracı için gönderilmeyi bekleyen yerel değişiklik var mı? */
+function _hasPendingPush(tenantKey) {
+  if (_debounceTimers.has(tenantKey)) return true;
+  try {
+    const raw = localStorage.getItem(PENDING_SYNC_KEY);
+    return Boolean(raw && JSON.parse(raw).tenantKey === tenantKey);
+  } catch (e) {
+    return false;
   }
 }
 
@@ -111,12 +156,10 @@ export function pushLocalStateToCloud(tenantKey, stateData, delayMs = 1200) {
   if (!tenantKey || !stateData) return;
 
   // İlk bulut verisi çekilmeden asla bayat yerel veriyi buluta yazma (Veri ezilmesini önler)
-  if (!_cloudLoadDoneSet.has(tenantKey) && tenantKey !== 'shepherd_global_users_registry') {
+  if (!_cloudLoadDoneSet.has(tenantKey)) {
     console.log(`[SyncManager] ⏳ '${tenantKey}' için ilk bulut eşitlemesi bekleniyor. Push ertelendi.`);
     return;
   }
-
-  _lastPendingState = { tenantKey, stateData, timestamp: Date.now() };
 
   if (!navigator.onLine) {
     _savePendingToLocalStorage(tenantKey, stateData);
@@ -129,31 +172,35 @@ export function pushLocalStateToCloud(tenantKey, stateData, delayMs = 1200) {
   if (_debounceTimers.has(tenantKey)) {
     clearTimeout(_debounceTimers.get(tenantKey));
   }
+  _pendingPayloads.set(tenantKey, stateData);
 
   const timer = setTimeout(() => {
     _debounceTimers.delete(tenantKey);
-    _executeCloudPush(tenantKey, stateData);
+    const payload = _pendingPayloads.get(tenantKey);
+    _pendingPayloads.delete(tenantKey);
+    _executeCloudPush(tenantKey, payload);
   }, delayMs);
 
   _debounceTimers.set(tenantKey, timer);
 }
 
 /**
- * Beklemeden ANINDA buluta gönderir (Kullanıcı kayıtları için)
+ * Debounce bekleyen tüm gönderimleri hemen yapar (örn. çıkış yapmadan önce).
  */
-export async function pushStateToCloudImmediate(tenantKey, stateData) {
-  if (!tenantKey || !stateData) return false;
-
-  if (_debounceTimers.has(tenantKey)) {
-    clearTimeout(_debounceTimers.get(tenantKey));
-    _debounceTimers.delete(tenantKey);
-  }
-
-  return await _executeCloudPush(tenantKey, stateData);
+export async function flushPendingPushes() {
+  const jobs = [];
+  _debounceTimers.forEach((timer, tenantKey) => {
+    clearTimeout(timer);
+    const payload = _pendingPayloads.get(tenantKey);
+    if (payload) jobs.push(_executeCloudPush(tenantKey, payload));
+  });
+  _debounceTimers.clear();
+  _pendingPayloads.clear();
+  await Promise.allSettled(jobs);
 }
 
 /**
- * Doğrudan Supabase REST/SDK upsert işlemi
+ * Supabase upsert işlemi (oturum JWT'si ile; RLS sahiplik kontrolü sunucuda yapılır)
  */
 async function _executeCloudPush(tenantKey, stateData) {
   if (!navigator.onLine) {
@@ -163,75 +210,45 @@ async function _executeCloudPush(tenantKey, stateData) {
   }
 
   const client = getSupabaseClient();
-  const nowIso = new Date().toISOString();
-
-  if (!client) {
-    return await _executeCloudPushREST(tenantKey, stateData, nowIso);
-  }
-
-  try {
-    const payload = {
-      tenant_key: tenantKey,
-      farm_payload: stateData,
-      updated_at: nowIso
-    };
-
-    const { error } = await client
-      .from('farms_data')
-      .upsert(payload, { onConflict: 'tenant_key' });
-
-    if (error) {
-      console.error('[SyncManager] Supabase push hatası:', error.message || error);
-      setSyncStatus(SYNC_STATUS.ERROR);
-      return false;
-    } else {
-      _lastCloudUpdatedAt = nowIso;
-      console.log(`[SyncManager] ☁️ Veriler Supabase'e başarıyla eşitlendi (${tenantKey}).`);
-      _clearPendingLocalStorage();
-      setSyncStatus(SYNC_STATUS.SYNCED);
-      return true;
-    }
-  } catch (err) {
-    console.error('[SyncManager] Push istisnası:', err);
+  const session = await _getSession();
+  if (!client || !session) {
+    // Oturum yok / istemci yüklenemedi — veri kaybolmasın diye kuyruğa al
+    _savePendingToLocalStorage(tenantKey, stateData);
     setSyncStatus(SYNC_STATUS.ERROR);
     return false;
   }
-}
+  if (!_isOwnTenant(session, tenantKey)) {
+    console.warn(`[SyncManager] '${tenantKey}' oturumdaki kullanıcıya ait değil; push atlandı.`);
+    return false;
+  }
 
-/**
- * REST API üzerinden doğrudan push (SDK fallback)
- */
-async function _executeCloudPushREST(tenantKey, stateData, nowIso) {
   try {
-    const response = await fetch(`${SUPABASE_URL}/rest/v1/farms_data`, {
-      method: 'POST',
-      headers: {
-        'apikey': SUPABASE_KEY,
-        'Authorization': `Bearer ${SUPABASE_KEY}`,
-        'Content-Type': 'application/json',
-        'Prefer': 'resolution=merge-duplicates'
-      },
-      body: JSON.stringify({
+    const { data, error } = await client
+      .from('farms_data')
+      .upsert({
         tenant_key: tenantKey,
-        farm_payload: stateData,
-        updated_at: nowIso
-      })
-    });
+        owner_id: session.user.id,
+        farm_payload: stateData
+      }, { onConflict: 'tenant_key' })
+      .select('updated_at')
+      .single();
 
-    if (response.ok) {
-      _lastCloudUpdatedAt = nowIso;
-      console.log(`[SyncManager] ☁️ REST üzerinden veriler başarıyla eşitlendi (${tenantKey}).`);
-      _clearPendingLocalStorage();
-      setSyncStatus(SYNC_STATUS.SYNCED);
-      return true;
-    } else {
-      const errText = await response.text();
-      console.error('[SyncManager] REST push hatası:', errText);
+    if (error) {
+      console.error('[SyncManager] Supabase push hatası:', error.message || error);
+      _savePendingToLocalStorage(tenantKey, stateData);
       setSyncStatus(SYNC_STATUS.ERROR);
       return false;
     }
+
+    // Sunucunun yazdığı zaman damgasını sakla — kendi yazdığımızı "başka cihazdan güncelleme" sanmayalım
+    _lastCloudUpdatedAt = data?.updated_at || _lastCloudUpdatedAt;
+    console.log(`[SyncManager] ☁️ Veriler Supabase'e başarıyla eşitlendi (${tenantKey}).`);
+    _clearPendingLocalStorage(tenantKey);
+    setSyncStatus(SYNC_STATUS.SYNCED);
+    return true;
   } catch (err) {
-    console.error('[SyncManager] REST push istisnası:', err);
+    console.error('[SyncManager] Push istisnası:', err);
+    _savePendingToLocalStorage(tenantKey, stateData);
     setSyncStatus(SYNC_STATUS.ERROR);
     return false;
   }
@@ -248,52 +265,35 @@ export async function pullCloudStateToLocal(tenantKey) {
     return null;
   }
 
+  const client = getSupabaseClient();
+  const session = await _getSession();
+  if (!client || !session || !_isOwnTenant(session, tenantKey)) {
+    setSyncStatus(client ? SYNC_STATUS.ERROR : SYNC_STATUS.OFFLINE);
+    return null;
+  }
+
   setSyncStatus(SYNC_STATUS.SYNCING);
 
-  const client = getSupabaseClient();
-  let cloudPayload = null;
-
   try {
-    if (client) {
-      const { data, error } = await client
-        .from('farms_data')
-        .select('farm_payload, updated_at')
-        .eq('tenant_key', tenantKey)
-        .maybeSingle();
+    const { data, error } = await client
+      .from('farms_data')
+      .select('farm_payload, updated_at')
+      .eq('tenant_key', tenantKey)
+      .maybeSingle();
 
-      if (error) {
-        console.error('[SyncManager] Supabase pull hatası:', error.message || error);
-        setSyncStatus(SYNC_STATUS.ERROR);
-        return null;
-      }
-
-      if (data && data.farm_payload) {
-        cloudPayload = data.farm_payload;
-        _lastCloudUpdatedAt = data.updated_at;
-        console.log(`[SyncManager] ☁️ Buluttan veriler çekildi (Tarih: ${data.updated_at}).`);
-      }
-    } else {
-      // REST Fallback
-      const response = await fetch(`${SUPABASE_URL}/rest/v1/farms_data?tenant_key=eq.${encodeURIComponent(tenantKey)}&select=farm_payload,updated_at`, {
-        method: 'GET',
-        headers: {
-          'apikey': SUPABASE_KEY,
-          'Authorization': `Bearer ${SUPABASE_KEY}`,
-          'Accept': 'application/json'
-        }
-      });
-
-      if (response.ok) {
-        const rows = await response.json();
-        if (Array.isArray(rows) && rows.length > 0 && rows[0].farm_payload) {
-          cloudPayload = rows[0].farm_payload;
-          _lastCloudUpdatedAt = rows[0].updated_at;
-        }
-      }
+    if (error) {
+      console.error('[SyncManager] Supabase pull hatası:', error.message || error);
+      setSyncStatus(SYNC_STATUS.ERROR);
+      return null;
     }
 
     setSyncStatus(SYNC_STATUS.SYNCED);
-    return cloudPayload;
+    if (data && data.farm_payload) {
+      _lastCloudUpdatedAt = data.updated_at;
+      console.log(`[SyncManager] ☁️ Buluttan veriler çekildi (Tarih: ${data.updated_at}).`);
+      return data.farm_payload;
+    }
+    return null;
   } catch (err) {
     console.error('[SyncManager] Pull esnasında hata oluştu:', err);
     setSyncStatus(SYNC_STATUS.ERROR);
@@ -308,23 +308,30 @@ export async function checkForCloudUpdates() {
   if (!navigator.onLine) return;
   const state = getState();
   const tenantKey = state.currentTenantKey;
-  if (!tenantKey || tenantKey === 'shepherd_global_users_registry' || !isCloudLoadDone(tenantKey)) return;
+  if (!tenantKey || state.currentUser?.isDemo || !isCloudLoadDone(tenantKey)) return;
+
+  // Gönderilmemiş yerel değişiklik varsa bulut verisi daha eskidir — ezme
+  if (_hasPendingPush(tenantKey)) return;
 
   const client = getSupabaseClient();
-  try {
-    if (client) {
-      const { data } = await client
-        .from('farms_data')
-        .select('farm_payload, updated_at')
-        .eq('tenant_key', tenantKey)
-        .maybeSingle();
+  const session = await _getSession();
+  if (!client || !_isOwnTenant(session, tenantKey)) return;
 
-      if (data && data.updated_at && data.updated_at !== _lastCloudUpdatedAt) {
-        console.log('[SyncManager] 🔄 Diğer cihazdan yeni güncelleme algılandı! Ekran yenileniyor...');
-        _lastCloudUpdatedAt = data.updated_at;
-        if (data.farm_payload) {
-          applyCloudState(data.farm_payload);
-        }
+  try {
+    const { data } = await client
+      .from('farms_data')
+      .select('farm_payload, updated_at')
+      .eq('tenant_key', tenantKey)
+      .maybeSingle();
+
+    // Sorgu sürerken kullanıcı yerel değişiklik yapmış olabilir
+    if (_hasPendingPush(tenantKey) || getState().currentTenantKey !== tenantKey) return;
+
+    if (data && data.updated_at && data.updated_at !== _lastCloudUpdatedAt) {
+      console.log('[SyncManager] 🔄 Diğer cihazdan yeni güncelleme algılandı! Ekran yenileniyor...');
+      _lastCloudUpdatedAt = data.updated_at;
+      if (data.farm_payload) {
+        applyCloudState(data.farm_payload);
       }
     }
   } catch (e) {
@@ -342,9 +349,12 @@ function _savePendingToLocalStorage(tenantKey, stateData) {
   } catch (e) {}
 }
 
-function _clearPendingLocalStorage() {
+function _clearPendingLocalStorage(tenantKey) {
   try {
-    localStorage.removeItem(PENDING_SYNC_KEY);
+    const raw = localStorage.getItem(PENDING_SYNC_KEY);
+    if (raw && JSON.parse(raw).tenantKey === tenantKey) {
+      localStorage.removeItem(PENDING_SYNC_KEY);
+    }
   } catch (e) {}
 }
 
@@ -359,8 +369,8 @@ export function flushPendingQueue() {
         console.log('[SyncManager] 🚀 Çevrimdışı kuyruktaki veriler buluta gönderiliyor...');
         pushLocalStateToCloud(pending.tenantKey, pending.stateData, 200);
       }
-    } else if (_lastPendingState && _lastPendingState.tenantKey && _lastPendingState.stateData && isCloudLoadDone(_lastPendingState.tenantKey)) {
-      pushLocalStateToCloud(_lastPendingState.tenantKey, _lastPendingState.stateData, 200);
+    } else if (getState().currentUser?.isDemo) {
+      setSyncStatus(SYNC_STATUS.LOCAL);
     } else {
       setSyncStatus(SYNC_STATUS.SYNCED);
     }
@@ -405,7 +415,7 @@ export function initSyncManager() {
   }
 
   getSupabaseClient();
-  
+
   if (navigator.onLine) {
     flushPendingQueue();
   } else {
