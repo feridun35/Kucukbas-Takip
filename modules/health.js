@@ -24,8 +24,8 @@ export function render() {
       <!-- Box 1 -->
       <div id="btn-goto-ai" class="glass-card hub-box" style="display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:var(--space-lg) var(--space-md); cursor:pointer; min-height:140px; border-color:rgba(59, 130, 246, 0.3); transition:all 0.2s;">
         <span style="font-size:2.5rem; margin-bottom:12px;">🩺</span>
-        <h4 style="font-size:0.95rem; color:var(--text-primary); margin-bottom:4px;">Yapay Zeka Teşhis</h4>
-        <p style="font-size:0.7rem; color:var(--text-muted);">Semptomlardan hastalık analizi</p>
+        <h4 style="font-size:0.95rem; color:var(--text-primary); margin-bottom:4px;">Teşhis Asistanı</h4>
+        <p style="font-size:0.7rem; color:var(--text-muted);">36 hastalıkta ayırıcı ön tanı</p>
       </div>
 
       <!-- Box 2 -->

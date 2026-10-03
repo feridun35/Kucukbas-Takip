@@ -99,12 +99,11 @@ export function getTaskCountsByTimeRange(tasks) {
 }
 
 /**
- * Rolüne ve kapsama göre filtrelenmiş görev listesini döndürür.
- * @param {'owner'|'worker'} role
+ * Kapsama göre filtrelenmiş görev listesini döndürür.
  * @param {'herd'|'individual'|'all'} scope
  * @param {string|null} animalTag - Bireysel görevler için hayvan küpe no
  */
-export function getTasksForUser(role, scope = 'all', animalTag = null) {
+export function getTasks(scope = 'all', animalTag = null) {
   const state = readState();
   let tasks = (state.tasks || []).map(t => ({ ...t }));
 
@@ -112,10 +111,6 @@ export function getTasksForUser(role, scope = 'all', animalTag = null) {
     tasks = tasks.filter(t => t.scope === 'herd');
   } else if (scope === 'individual' && animalTag) {
     tasks = tasks.filter(t => t.scope === 'individual' && t.targetTag === animalTag);
-  }
-
-  if (role === 'worker') {
-    tasks = tasks.filter(t => t.status === 'pending');
   }
 
   return tasks;

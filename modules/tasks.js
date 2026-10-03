@@ -6,7 +6,7 @@
 import { todayIso } from '../core/dateUtils.js';
 import { getState, setState } from '../core/state.js';
 import { 
-  getTasksForUser, 
+  getTasks,
   getTaskHistory, 
   addTask, 
   completeTask, 
@@ -28,20 +28,18 @@ export function render() {
   _container.className = 'page-enter tasks-page';
   _container.style.paddingBottom = '180px'; 
   
-  const state = getState();
-  const role = state.userRole || 'owner';
-  const tasks = getTasksForUser(role, 'all');
+  const tasks = getTasks('all');
   const history = getTaskHistory('all');
   const pendingCount = tasks.filter(t => t.status === 'pending').length;
 
   _container.innerHTML = `
-    ${_renderHeader(role, pendingCount, history.length)}
+    ${_renderHeader(pendingCount, history.length)}
     ${_renderViewToggle()}
     ${_viewMode === 'active' 
-      ? (role === 'owner' ? _renderOwnerDashboard(tasks) : _renderWorkerTodoList(tasks))
+      ? _renderTaskDashboard(tasks)
       : _renderHistoryList(history)
     }
-    ${_renderHugeActionButtons(role)}
+    ${_renderHugeActionButtons()}
     
     <!-- Emergency Modal -->
     <div id="emergency-overlay" class="emergency-overlay" style="display:none;">
@@ -180,13 +178,11 @@ export { _showAddTaskFlow as showAddTaskFlow };
 // Render Helpers
 // ═══════════════════════════════════════
 
-function _renderHeader(role, pendingCount, historyCount) {
-  const isOwner = role === 'owner';
+function _renderHeader(pendingCount, historyCount) {
   return `
     <div class="tasks-header">
       <div class="tasks-h-left">
         <h2>Görev ve Lojistik Panosu</h2>
-        <p>Aktif Rol: <strong style="color:${isOwner ? 'var(--accent-blue)' : 'var(--accent-green)'}">${isOwner ? '👨‍🌾 SAHİP' : '🧑‍🔧 ÇALIŞAN'}</strong></p>
       </div>
     </div>
     
@@ -259,7 +255,7 @@ function _renderEmptyState(timeFilter) {
   `;
 }
 
-function _renderOwnerDashboard(tasks) {
+function _renderTaskDashboard(tasks) {
   const filteredTasks = filterTasksByTimeRange(tasks, _timeFilter);
 
   return `
@@ -267,22 +263,7 @@ function _renderOwnerDashboard(tasks) {
     ${_renderTimeFilterChips(tasks)}
     <div class="task-list">
       ${filteredTasks.length > 0
-        ? filteredTasks.map(t => _renderTaskItem(t, 'owner')).join('')
-        : _renderEmptyState(_timeFilter)
-      }
-    </div>
-  `;
-}
-
-function _renderWorkerTodoList(tasks) {
-  const filteredTasks = filterTasksByTimeRange(tasks, _timeFilter);
-
-  return `
-    <div class="section-title" style="margin-top:12px;"><span class="dot" style="background:var(--accent-green)"></span>Yapılacaklar</div>
-    ${_renderTimeFilterChips(tasks)}
-    <div class="task-list worker-list">
-      ${filteredTasks.length > 0
-        ? filteredTasks.map(t => _renderTaskItem(t, 'worker')).join('')
+        ? filteredTasks.map(t => _renderTaskItem(t)).join('')
         : _renderEmptyState(_timeFilter)
       }
     </div>
@@ -323,7 +304,7 @@ function _renderHistoryList(history) {
   `;
 }
 
-function _renderTaskItem(task, role) {
+function _renderTaskItem(task) {
   const typeInfo = TASK_TYPES.find(t => t.value === task.type) || TASK_TYPES[5];
   const isCompleted = task.status === 'completed';
   const overdue = isTaskOverdue(task);
@@ -365,7 +346,7 @@ function _renderTaskItem(task, role) {
   `;
 }
 
-function _renderHugeActionButtons(role) {
+function _renderHugeActionButtons() {
   return `
     <div class="tasks-fixed-bottom">
       <button class="huge-btn btn-primary" id="btn-add-herd-task" style="background:var(--accent-blue); box-shadow:0 4px 16px rgba(59, 130, 246, 0.4);">

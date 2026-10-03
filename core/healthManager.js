@@ -11,7 +11,7 @@
 import { stripTags, deepStripTags } from './sanitize.js';
 import { getPregnantAnimalIds, getOpenDamMap, DAM_STATUS } from './breedingStatus.js';
 import { todayIso, addDaysIso, normalizeDateInput } from './dateUtils.js';
-import { getAnimalById, getState, readState, setState } from './state.js';
+import { getState, readState, setState } from './state.js';
 import { getDefaultMedications } from '../data/med-library.js';
 import {
   RECORD_TYPES,
@@ -569,66 +569,6 @@ export function markCourseDoseCompleted(treatmentRecords, recordId, doseNumber) 
 // 7. MEVCUT FONKSIYONLAR (Orijinal — korunuyor)
 // ═══════════════════════════════════════════
 
-/**
- * Belirtilere göre basit bir risk analizi yapar. 
- * KURAL: Kesinlikle veteriner tavsiyesi olmadığı belirtilmelidir.
- */
-export function evaluateSymptoms(animalId, symptoms) {
-  const animal = getAnimalById(animalId);
-  const disclaimer = "⚠️ BU BİR VETERİNER TAVSİYESİ DEĞİLDİR, SADECE RİSK ANALİZİDİR. Lütfen kesin teşhis için hekiminize danışın.";
-  
-  if (!symptoms || symptoms.length === 0) {
-    return {
-      riskLevel: 'low',
-      possibleDiseases: ['Sağlıklı Görünüyor'],
-      recommendation: 'Gözlemlemeye devam edin.',
-      disclaimer
-    };
-  }
-
-  if (symptoms.includes('lameness') && symptoms.includes('mouth_lesion')) {
-    return {
-      riskLevel: 'danger',
-      possibleDiseases: ['Şap Hastalığı (FMD) Şüphesi'],
-      recommendation: 'Hayvanı DERHAL karantinaya alın. Sürünün geri kalanından izole edin ve veteriner hekim çağırın.',
-      disclaimer
-    };
-  }
-  
-  if (symptoms.includes('cough') && symptoms.includes('nasal_discharge')) {
-    return {
-      riskLevel: 'warning',
-      possibleDiseases: ['Pnömoni (Zatürre) Şüphesi', 'Solunum Yolu Enfeksiyonu'],
-      recommendation: 'Hayvanın ateşini ölçün. Havadar fakat hava akımı (cereyan) olmayan bir bölmeye alın.',
-      disclaimer
-    };
-  }
-  
-  if (symptoms.includes('diarrhea') && symptoms.includes('lethargy')) {
-    return {
-      riskLevel: 'danger',
-      possibleDiseases: ['Enterotoksemi (Çelerme)', 'Ağır Parazit Vakası'],
-      recommendation: 'Acil sıvı takviyesi (elektrolit) gerekebilir. Veteriner müdahalesi şarttır.',
-      disclaimer
-    };
-  }
-  
-  if (symptoms.includes('udder_swelling')) {
-    return {
-      riskLevel: 'warning',
-      possibleDiseases: ['Mastitis (Meme İltihabı)'],
-      recommendation: 'Etkilenen memeyi sık sık sağın ve soğuk masaj uygulayın. Sağım sırasını en sona bırakın.',
-      disclaimer
-    };
-  }
-  
-  return {
-    riskLevel: 'warning',
-    possibleDiseases: ['Belirlenemeyen Enfeksiyon/Hastalık'],
-    recommendation: 'Belirtiler birden fazla hastalığa işaret edebilir. Yakından gözlemleyip ateş ölçümü yapın.',
-    disclaimer
-  };
-}
 
 /**
  * Eski API uyumluluğu — (Deprecated: artık calculateWithdrawalFromLastDose kullanın)

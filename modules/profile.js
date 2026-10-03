@@ -4,7 +4,6 @@
 
 import { escapeHtml } from '../core/sanitize.js';
 import { showAlert, showConfirm, showPrompt } from '../core/modal.js';
-import { getState, setState } from '../core/state.js';
 import { getCurrentUser, logout, updateCurrentUser, claimLegacyData } from '../core/auth.js';
 
 let _container = null;
@@ -14,28 +13,24 @@ export function render() {
   _container.className = 'page-enter user-profile-page';
   _container.style.paddingBottom = '110px'; 
   
-  const state = getState();
   const currentUser = getCurrentUser() || {
     ownerName: 'Misafir Kullanıcı',
     farmName: 'ShepherdAI Çiftliği',
     email: 'kullanici@shepherdai.com',
-    role: state.userRole || 'owner',
     id: 'usr_guest',
     isDemo: false
   };
 
-  const role = state.userRole || currentUser.role || 'owner';
-  const isOwner = role === 'owner';
   const isDemo = currentUser.isDemo || currentUser.id === 'demo';
   
   _container.innerHTML = `
     <div class="profile-header-card glass-card" style="display:flex; flex-direction:column; align-items:center; padding:var(--space-xl); margin-bottom:var(--space-lg); text-align:center;">
-      <div style="width:90px; height:90px; border-radius:50%; background:${isOwner ? 'var(--accent-blue)' : 'var(--accent-green)'}; display:flex; align-items:center; justify-content:center; font-size:40px; box-shadow:0 0 20px ${isOwner ? 'var(--accent-blue-glow)' : 'var(--accent-green-glow)'}; margin-bottom:var(--space-sm);">
-        ${isOwner ? '👨‍🌾' : '🧑‍🔧'}
+      <div style="width:90px; height:90px; border-radius:50%; background:var(--accent-blue); display:flex; align-items:center; justify-content:center; font-size:40px; box-shadow:0 0 20px var(--accent-blue-glow); margin-bottom:var(--space-sm);">
+        👨‍🌾
       </div>
       <h2 style="font-size:1.4rem; color:var(--text-primary); font-weight:700;">${escapeHtml(currentUser.ownerName)}</h2>
-      <p style="color:${isOwner ? 'var(--accent-green)' : 'var(--accent-blue)'}; font-size:0.9rem; font-weight:500;">
-        ${escapeHtml(currentUser.farmName)} • ${isOwner ? 'Çiftlik Sahibi & Yönetici' : 'Çoban / Saha Çalışanı'}
+      <p style="color:var(--accent-green); font-size:0.9rem; font-weight:500;">
+        ${escapeHtml(currentUser.farmName)} • Çiftlik Sahibi
       </p>
       <div style="display:flex; gap:6px; margin-top:8px; align-items:center;">
         <span style="font-size:0.75rem; padding:3px 10px; border-radius:12px; background:rgba(255,255,255,0.08); color:var(--text-muted);">
@@ -43,22 +38,6 @@ export function render() {
         </span>
         ${isDemo ? '<span style="font-size:0.75rem; padding:3px 10px; border-radius:12px; background:rgba(59,130,246,0.2); color:var(--accent-blue); font-weight:600;">Demo</span>' : '<span style="font-size:0.75rem; padding:3px 10px; border-radius:12px; background:rgba(34,197,94,0.2); color:var(--accent-green); font-weight:600;">Canlı İşletme</span>'}
       </div>
-    </div>
-
-    <!-- Rol Seçimi -->
-    <div class="section-title"><span class="dot" style="background:var(--accent-purple)"></span>Aktif Rol</div>
-    <div class="glass-card" style="padding:0; margin-bottom:var(--space-lg);">
-      <div style="display:flex; border-radius:var(--radius-md); overflow:hidden;">
-        <button id="btn-role-owner" style="flex:1; padding:14px; border:none; font-weight:700; font-size:0.95rem; cursor:pointer; transition:0.25s; background:${isOwner ? 'var(--accent-blue)' : 'var(--glass-bg)'}; color:${isOwner ? '#fff' : 'var(--text-muted)'};">
-          👨‍🌾 Sahip (Owner)
-        </button>
-        <button id="btn-role-worker" style="flex:1; padding:14px; border:none; font-weight:700; font-size:0.95rem; cursor:pointer; transition:0.25s; background:${!isOwner ? 'var(--accent-green)' : 'var(--glass-bg)'}; color:${!isOwner ? '#fff' : 'var(--text-muted)'};">
-          🧑‍🔧 Çalışan (Worker)
-        </button>
-      </div>
-      <p style="font-size:0.7rem; color:var(--text-muted); padding:10px 16px; text-align:center;">
-        Seçilen rol, Görevler modülündeki görünümü ve yetkileri belirler.
-      </p>
     </div>
 
     <div class="section-title"><span class="dot"></span>Uygulama & Çiftlik Ayarları</div>
@@ -129,25 +108,6 @@ export function render() {
 
 export function init() {
   if (!_container) return;
-
-  // Rol seçim butonları
-  const btnOwner = _container.querySelector('#btn-role-owner');
-  const btnWorker = _container.querySelector('#btn-role-worker');
-  
-  if (btnOwner) {
-    btnOwner.addEventListener('click', () => {
-      setState({ userRole: 'owner' });
-      _rerender();
-      showAlert('Rol Değişti', 'Artık Sahip (Owner) olarak görev panelini kullanabilirsiniz.', '👨‍🌾');
-    });
-  }
-  if (btnWorker) {
-    btnWorker.addEventListener('click', () => {
-      setState({ userRole: 'worker' });
-      _rerender();
-      showAlert('Rol Değişti', 'Artık Çalışan (Worker) olarak sadece size atanan görevleri göreceksiniz.', '🧑‍🔧');
-    });
-  }
 
   // Toggle switches
   const toggles = _container.querySelectorAll('.toggle-switch');

@@ -26,7 +26,6 @@ export const DEMO_ACCOUNT = {
   email: 'demo@shepherdai.local',
   farmName: 'Bereket Yaylası Çiftliği (Demo)',
   ownerName: 'Demo Kullanıcı',
-  role: 'owner',
   storageKey: 'shepherd_data_demo',
   isDemo: true,
   createdAt: '2026-01-01'
@@ -69,7 +68,6 @@ function _profileFromSupabaseUser(sbUser, overrides = {}) {
     email: sbUser.email,
     farmName: stripTags(overrides.farmName || meta.farmName || '') || 'Çiftliğim',
     ownerName: stripTags(overrides.ownerName || meta.ownerName || '') || sbUser.email,
-    role: overrides.role || meta.role || 'owner',
     storageKey: tenantKeyForUserId(sbUser.id),
     isDemo: false,
     createdAt: (sbUser.created_at || new Date().toISOString()).split('T')[0]
@@ -165,14 +163,13 @@ async function _completeSignIn(client, sbUser, password, legacyUser = null) {
   const profile = _profileFromSupabaseUser(sbUser, legacyInfo ? {
     farmName: legacyInfo.farmName,
     ownerName: legacyInfo.ownerName,
-    role: legacyInfo.role
   } : {});
 
   if (legacyInfo) {
     _copyLegacyLocalData(legacyInfo.legacyStorageKey || legacyInfo.storageKey, profile.storageKey);
     _removeLegacyUser(profile.email.toLowerCase());
     // Profil bilgilerini Supabase kullanıcı metadata'sına yaz (diğer cihazlar için)
-    client.auth.updateUser({ data: { farmName: profile.farmName, ownerName: profile.ownerName, role: profile.role } })
+    client.auth.updateUser({ data: { farmName: profile.farmName, ownerName: profile.ownerName } })
       .catch(() => {});
   }
 
@@ -221,7 +218,6 @@ export async function login(email, password) {
       password: cleanPassword,
       farmName: legacyUser.farmName,
       ownerName: legacyUser.ownerName,
-      role: legacyUser.role || 'owner'
     }, legacyUser, cleanPassword);
   }
 
@@ -239,10 +235,10 @@ export function loginAsDemo() {
 
 /**
  * Yeni Çiftlik / Kullanıcı Kaydı Oluşturma
- * @param {Object} formData - { farmName, ownerName, email, password, role, legacyPassword? }
+ * @param {Object} formData - { farmName, ownerName, email, password, legacyPassword? }
  *   legacyPassword: Eski sürümdeki şifre (yeni şifreden farklıysa). Verilirse eski çiftlik verisi devralınır.
  */
-export async function registerUser({ farmName, ownerName, email, password, role = 'owner', legacyPassword = '' }) {
+export async function registerUser({ farmName, ownerName, email, password, legacyPassword = '' }) {
   if (!farmName || !farmName.trim()) {
     return { success: false, message: 'Lütfen çiftlik adını belirtiniz.' };
   }
@@ -267,15 +263,14 @@ export async function registerUser({ farmName, ownerName, email, password, role 
     password: cleanPassword,
     farmName: stripTags(farmName),
     ownerName: stripTags(ownerName),
-    role: role || 'owner'
   }, _findLegacyUser(cleanEmail, claimPassword), claimPassword);
 }
 
-async function _registerWithSupabase(client, { email, password, farmName, ownerName, role }, legacyUser, claimPassword = password) {
+async function _registerWithSupabase(client, { email, password, farmName, ownerName }, legacyUser, claimPassword = password) {
   const { data, error } = await client.auth.signUp({
     email,
     password,
-    options: { data: { farmName, ownerName, role } }
+    options: { data: { farmName, ownerName } }
   });
 
   if (error) return { success: false, message: _translateAuthError(error) };
@@ -292,7 +287,7 @@ async function _registerWithSupabase(client, { email, password, farmName, ownerN
   const claimed = await _claimLegacyCloudFarm(client, claimPassword);
   if (!claimed && !legacyUser) {
     // Tamamen yeni hesap — boş çiftlik
-    const profile = _profileFromSupabaseUser(data.user, { farmName, ownerName, role });
+    const profile = _profileFromSupabaseUser(data.user, { farmName, ownerName });
     _setCurrentUser(profile);
     initNewTenantState(profile);
     return { success: true, user: profile };
@@ -303,7 +298,6 @@ async function _registerWithSupabase(client, { email, password, farmName, ownerN
   const profile = _profileFromSupabaseUser(data.user, {
     farmName: legacyInfo.farmName || farmName,
     ownerName: legacyInfo.ownerName || ownerName,
-    role: legacyInfo.role || role
   });
   _copyLegacyLocalData(legacyInfo.legacyStorageKey || legacyInfo.storageKey, profile.storageKey);
   _removeLegacyUser(email);
@@ -416,8 +410,8 @@ export function updateCurrentUser(updatedFields) {
   if (!current.isDemo) {
     const client = getSupabaseClient();
     if (client && navigator.onLine) {
-      const { farmName, ownerName, role } = updatedUser;
-      client.auth.updateUser({ data: { farmName, ownerName, role } })
+      const { farmName, ownerName } = updatedUser;
+      client.auth.updateUser({ data: { farmName, ownerName } })
         .catch(e => console.error('[Auth] Profil buluta yazılamadı:', e));
     }
   }
