@@ -177,7 +177,7 @@ export function showFormModal(title, fields, icon = '📝') {
       return `
         <div style="margin-bottom:12px; text-align:left;">
           <label style="display:block; font-size:0.8rem; color:var(--text-secondary); margin-bottom:4px;">${f.label}</label>
-          <input type="${f.type}" id="form_${f.id}" class="c-modal-input" value="${val}" placeholder="${f.placeholder || ''}" style="width:100%; border-radius:8px; padding:10px;"/>
+          <input type="${f.type}" id="form_${f.id}" class="c-modal-input" value="${val}" placeholder="${f.placeholder || ''}"${f.min !== undefined ? ` min="${f.min}"` : ''}${f.max !== undefined ? ` max="${f.max}"` : ''}${f.step !== undefined ? ` step="${f.step}"` : ''} style="width:100%; border-radius:8px; padding:10px;"/>
         </div>
       `;
     }).join('');

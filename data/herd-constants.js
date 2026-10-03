@@ -57,3 +57,25 @@ export const DEATH_REASONS = [
   'Yaşlılık / Ecel',
   'Diğer / Bilinmeyen'
 ];
+
+// ── Fiziksel Sınırlar (veri girişi doğrulaması) ──
+// Küçükbaş için makul alt/üst değerler; bu aralığın dışındaki girişler büyük olasılıkla yazım hatasıdır.
+export const ANIMAL_LIMITS = {
+  maxAgeMonths: 240,          // 20 yıl
+  youngMaxAgeMonths: 24,      // Kuzu / Oğlak en fazla 24 aylık olabilir
+  adultMinAgeMonths: 6,       // Koyun / Keçi / Koç / Teke en az 6 aylık olmalı
+  weightKg: {                 // [en az, en çok] canlı ağırlık
+    'Kuzu':  [1, 80],
+    'Oğlak': [1, 70],
+    'Koyun': [15, 150],
+    'Keçi':  [10, 120],
+    'Koç':   [20, 200],
+    'Teke':  [15, 150]
+  },
+  defaultWeightKg: [1, 200],  // Tür bilinmiyorsa
+  birthWeightKg: [0.5, 10],
+  bcs: [1, 5]
+};
+
+// ── Tür → Cinsiyet ──
+export const TYPE_GENDER = { 'Koyun': 'Dişi', 'Keçi': 'Dişi', 'Koç': 'Erkek', 'Teke': 'Erkek' };
