@@ -4,10 +4,11 @@
  */
 
 import { setState, subscribe, STATE_SOURCES } from './state.js';
-import { isAuthenticated } from './auth.js';
 
 const _routes = {};
 let _currentRoute = null;
+// Oturum kontrolü app.js tarafından initRouter() ile verilir (router ⇄ auth döngüsel importu yok)
+let _isAuthenticated = () => false;
 let _pendingRefresh = false;
 let _refreshRetryTimer = null;
 
@@ -31,12 +32,16 @@ export function navigateTo(route) {
 /**
  * Router'ı başlat — hashchange event listener
  */
-export function initRouter() {
+/**
+ * @param {{ isAuthenticated: () => boolean }} options - Route guard için oturum kontrolü
+ */
+export function initRouter({ isAuthenticated } = {}) {
+  if (typeof isAuthenticated === 'function') _isAuthenticated = isAuthenticated;
   window.addEventListener('hashchange', _handleRouteChange);
 
   // Reaktiflik: başka cihazdan gelen bulut güncellemesi açık sayfayı yeniden çizer.
   // Yerel işlemler sayfaların kendi yeniden çizimiyle yönetildiği için burada tetiklenmez.
-  subscribe((_snapshot, meta) => {
+  subscribe((meta) => {
     if (meta?.source === STATE_SOURCES.CLOUD) refreshCurrentRoute();
   });
 
@@ -103,7 +108,7 @@ function _handleRouteChange() {
   let hash = window.location.hash.slice(1) || 'dashboard';
 
   // ── Oturum Koruma Kontrolü (Route Guard) ──
-  const authenticated = isAuthenticated();
+  const authenticated = _isAuthenticated();
 
   if (!authenticated) {
     if (hash !== 'auth') {

@@ -10,7 +10,7 @@
 
 import { getPregnantAnimalIds, getOpenDamMap, DAM_STATUS } from './breedingStatus.js';
 import { todayIso, addDaysIso, normalizeDateInput } from './dateUtils.js';
-import { getAnimalById, getState, setState } from './state.js';
+import { getAnimalById, getState, readState, setState } from './state.js';
 import { getDefaultMedications } from '../data/med-library.js';
 import {
   RECORD_TYPES,
@@ -32,7 +32,7 @@ export { calculateWithdrawalFromLastDose } from './healthRecords.js';
  * Aynı id'li kullanıcı ilacı varsayılanın üzerine yazar.
  */
 export function getAllMedications() {
-  const state = getState();
+  const state = readState();
   const defaults = getDefaultMedications();
   const customs = state.customMedications || [];
   const merged = [...defaults];
@@ -146,7 +146,7 @@ export function checkPregnancyRisk(medId, animalList) {
   if (!med || !med.contraindications?.pregnancyRisk) {
     return { hasRisk: false, pregnantAnimals: [], possiblyPregnantAnimals: [], warning: '' };
   }
-  const state = getState();
+  const state = readState();
   const pregnantIds = new Set(getPregnantAnimalIds(state.animals, state.breedingRecords));
   const openDams = getOpenDamMap(state.breedingRecords);
 
@@ -195,7 +195,7 @@ export function isOpenVialExpired(batch, med, today = todayIso()) {
  * Son kullanma tarihi geçmiş ve açık raf ömrü dolmuş partiler hariç.
  */
 export function getAvailableStock(medId) {
-  const state = getState();
+  const state = readState();
   const med = getMedicationById(medId);
   const today = todayIso();
   const stocks = (state.pharmacyStock || []).filter(s => isStockBatchUsable(s, med, today));
@@ -249,7 +249,7 @@ export function computeStockDeduction(allStockIn, medId, amount) {
  * @returns {{ success: boolean, message: string, remaining: number }}
  */
 export function deductFromStock(medId, amount) {
-  const result = computeStockDeduction(getState().pharmacyStock, medId, amount);
+  const result = computeStockDeduction(readState().pharmacyStock, medId, amount);
   if (!result.success) return result;
   setState({ pharmacyStock: result.stock });
   return { success: true, message: result.message, remaining: 0 };
@@ -300,7 +300,7 @@ export function markStockAsWaste(stockId, reason) {
 
 /** Kritik stok seviyesindeki ilaçları listeler */
 export function getCriticalStocks() {
-  const state = getState();
+  const state = readState();
   const today = todayIso();
   const meds = getAllMedications();
   const critical = [];
@@ -344,14 +344,14 @@ export function getCriticalStocks() {
  * @returns {{ hasActiveWithdrawal, meatDaysLeft, milkDaysLeft, records: [] }}
  */
 export function getAnimalWithdrawalStatus(animalId) {
-  return computeWithdrawalStatus(getState().treatmentRecords, animalId);
+  return computeWithdrawalStatus(readState().treatmentRecords, animalId);
 }
 
 /**
  * Sürüdeki tüm karantinadaki hayvanları listeler (Dashboard / Herd-list için).
  */
 export function getAllQuarantinedAnimals() {
-  const state = getState();
+  const state = readState();
   return computeQuarantinedAnimals(state.animals, state.treatmentRecords);
 }
 
@@ -360,7 +360,7 @@ export function getAllQuarantinedAnimals() {
  * @param {string|null} animalId - Verilirse yalnızca o hayvanı kapsayan kalemler
  */
 export function getVaccineAgenda(animalId = null) {
-  const state = getState();
+  const state = readState();
   return buildVaccineAgenda(state.tasks, state.treatmentRecords, animalId);
 }
 

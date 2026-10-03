@@ -71,7 +71,7 @@ function initApp() {
   if (!window.location.hash) {
     window.location.hash = isAuthenticated() ? '#dashboard' : '#auth';
   }
-  initRouter();
+  initRouter({ isAuthenticated });
 
   // Sensör polling başlat (mock — 60 saniyede bir)
   startSensorPolling(60000);

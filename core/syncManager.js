@@ -18,7 +18,6 @@
  * Kiracı anahtarı her zaman `shepherd_data_<auth.uid()>` biçimindedir.
  */
 
-import { getState, applyCloudState, getCloudPayload } from './state.js';
 import { migrateTenantData } from './migrations.js';
 import { mergeFarmPayloads } from './syncMerge.js';
 
@@ -30,6 +29,20 @@ const SYNC_META_PREFIX = 'shepherd_sync_meta_';
 const SYNC_BASE_PREFIX = 'shepherd_sync_base_';
 const MAX_PUSH_ATTEMPTS = 3;
 const TENANT_KEY_PREFIX = 'shepherd_data_';
+
+// ── State köprüsü ──
+// syncManager state.js'i doğrudan import etmez (döngüsel bağımlılık olmasın diye);
+// state.js yüklenirken kendi fonksiyonlarını connectStateBridge() ile buraya kaydeder.
+const _state = {
+  getState: () => ({}),
+  applyCloudState: () => {},
+  getCloudPayload: () => ({})
+};
+
+/** state.js tarafından bir kez çağrılır */
+export function connectStateBridge(bridge) {
+  Object.assign(_state, bridge);
+}
 
 // Senkronizasyon Durumları
 export const SYNC_STATUS = {
@@ -198,15 +211,15 @@ function _adoptLegacyPendingQueue(tenantKey) {
 }
 
 function _isCurrentTenant(tenantKey) {
-  const state = getState();
+  const state = _state.getState();
   return state.currentTenantKey === tenantKey && !state.currentUser?.isDemo;
 }
 
 /** Bulut kaydını, yerel ile birleştirip uygular; yeni ortak taban buluttaki yük olur */
 function _reconcileWithCloud(tenantKey, remote) {
   const cloud = migrateTenantData(remote.farm_payload || {});
-  const merged = mergeFarmPayloads(_getBase(tenantKey), getCloudPayload(), cloud);
-  applyCloudState(merged);
+  const merged = mergeFarmPayloads(_getBase(tenantKey), _state.getCloudPayload(), cloud);
+  _state.applyCloudState(merged);
   _saveBase(tenantKey, cloud);
   const meta = getSyncMeta(tenantKey);
   meta.cloudUpdatedAt = remote.updated_at;
@@ -215,8 +228,8 @@ function _reconcileWithCloud(tenantKey, remote) {
 
 /** Bulut kaydını olduğu gibi uygular (yerelde gönderilmemiş değişiklik yokken) */
 function _adoptCloud(tenantKey, remote) {
-  applyCloudState(remote.farm_payload || {});
-  _saveBase(tenantKey, getCloudPayload());
+  _state.applyCloudState(remote.farm_payload || {});
+  _saveBase(tenantKey, _state.getCloudPayload());
   const meta = getSyncMeta(tenantKey);
   meta.cloudUpdatedAt = remote.updated_at;
   _saveMeta(tenantKey, meta);
@@ -401,7 +414,7 @@ async function _pushOnce(tenantKey) {
       return 'conflict';
     }
 
-    const payload = getCloudPayload();
+    const payload = _state.getCloudPayload();
     let newUpdatedAt;
 
     if (remote) {
@@ -450,7 +463,7 @@ async function _pushOnce(tenantKey) {
  * Bekleyen gönderimleri hemen yapar (örn. çıkış yapmadan önce).
  */
 export async function flushPendingPushes() {
-  const tenantKey = getState().currentTenantKey;
+  const tenantKey = _state.getState().currentTenantKey;
   _debounceTimers.forEach(timer => clearTimeout(timer));
   _debounceTimers.clear();
   if (!tenantKey || !_cloudLoadDoneSet.has(tenantKey)) return;
@@ -472,7 +485,7 @@ function _hasUnsentLocalChanges(tenantKey) {
  */
 export async function checkForCloudUpdates() {
   if (!navigator.onLine) return;
-  const tenantKey = getState().currentTenantKey;
+  const tenantKey = _state.getState().currentTenantKey;
   if (!tenantKey || !_isCurrentTenant(tenantKey)) return;
 
   if (!_cloudLoadDoneSet.has(tenantKey)) {
@@ -509,7 +522,7 @@ export async function checkForCloudUpdates() {
 
 /** Bağlantı geri geldiğinde: eşitleme yapılmadıysa yap, kirli veri varsa gönder */
 export function flushPendingQueue() {
-  const state = getState();
+  const state = _state.getState();
   const tenantKey = state.currentTenantKey;
   if (!tenantKey) return;
   if (state.currentUser?.isDemo) {

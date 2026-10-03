@@ -4,7 +4,7 @@
  */
 
 import { todayIso, addDaysIso, normalizeDateInput } from './dateUtils.js';
-import { getState, setState } from './state.js';
+import { getState, readState, setState } from './state.js';
 import { buildRecordFromCompletedTask, markCourseDoseCompleted, computeStockDeduction } from './healthManager.js';
 
 /** Görev Türleri */
@@ -104,8 +104,8 @@ export function getTaskCountsByTimeRange(tasks) {
  * @param {string|null} animalTag - Bireysel görevler için hayvan küpe no
  */
 export function getTasksForUser(role, scope = 'all', animalTag = null) {
-  const state = getState();
-  let tasks = [...(state.tasks || [])];
+  const state = readState();
+  let tasks = (state.tasks || []).map(t => ({ ...t }));
 
   if (scope === 'herd') {
     tasks = tasks.filter(t => t.scope === 'herd');
@@ -126,8 +126,8 @@ export function getTasksForUser(role, scope = 'all', animalTag = null) {
  * @param {string|null} animalTag
  */
 export function getTaskHistory(scope = 'all', animalTag = null) {
-  const state = getState();
-  let history = [...(state.taskHistory || [])];
+  const state = readState();
+  let history = (state.taskHistory || []).map(t => ({ ...t }));
 
   if (scope === 'herd') {
     history = history.filter(t => t.scope === 'herd');

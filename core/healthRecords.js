@@ -105,9 +105,26 @@ export function computeWithdrawalStatus(treatmentRecords, animalId) {
  * @param {Array} treatmentRecords
  */
 export function computeQuarantinedAnimals(animals, treatmentRecords) {
+  // Kayıtlar bir kez taranır: yalnızca arınması süren kayıtlar hayvan bazında gruplanır (O(hayvan + kayıt))
+  const activeByAnimal = new Map();
+  (treatmentRecords || []).forEach(r => {
+    if (!r.withdrawals) return;
+    const targets = r.animalId ? [r.animalId, ...(r.batchTargets || [])] : (r.batchTargets || []);
+    if (targets.length === 0) return;
+    const w = calculateWithdrawalFromLastDose(
+      r.withdrawals.meatWithdrawalDays, r.withdrawals.milkWithdrawalDays, r.withdrawals.lastDoseDate);
+    if (w.meatDaysLeft === 0 && w.milkDaysLeft === 0) return;
+    new Set(targets).forEach(id => {
+      if (!activeByAnimal.has(id)) activeByAnimal.set(id, []);
+      activeByAnimal.get(id).push(r);
+    });
+  });
+
   const quarantined = [];
   (animals || []).forEach(a => {
-    const ws = computeWithdrawalStatus(treatmentRecords, a.id);
+    const recs = activeByAnimal.get(a.id);
+    if (!recs) return;
+    const ws = computeWithdrawalStatus(recs, a.id);
     if (ws.hasActiveWithdrawal) {
       quarantined.push({
         animalId: a.id,

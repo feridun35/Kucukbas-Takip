@@ -8,7 +8,7 @@
  * sonuçta `assumptions` listesiyle açıkça bildirilir. Rastgele / uydurma değer üretilmez.
  */
 
-import { getAnimalById, getState } from './state.js';
+import { getAnimalById, readState } from './state.js';
 import { calculateAnimalDailyFeed, getAverageFeedPrice, calculateAverageDailyGain } from './herdMathEngine.js';
 import { recordTargetsAnimal } from './healthRecords.js';
 import { todayIso, daysBetweenIso, isValidIsoDate } from './dateUtils.js';
@@ -79,7 +79,7 @@ function _valueTrajectory(startValue, endValue, points = 7) {
  * @returns {Object|null} { netValue, totalCost, profitLoss, roiPercentage, sparklineData, assumptions }
  */
 export function calculateAnimalROI(animalId) {
-  const state = getState();
+  const state = readState();
   const feedPrice = getAverageFeedPrice(state.feedInventory);
   const feedAssumption = state.financeSummary?.feedPriceIsAssumed !== false
     ? [`depoda fiyatlı yem yok (${MARKET_PRICES.feedPerKg} ₺/kg varsayıldı)`] : [];
@@ -119,7 +119,7 @@ export function calculateAnimalROI(animalId) {
  * @param {(animal) => boolean} filterFn
  */
 export function calculateDailyFeedCostPerHead(filterFn = () => true) {
-  const state = getState();
+  const state = readState();
   const group = (state.animals || []).filter(filterFn);
   if (group.length === 0) return null;
   const price = getAverageFeedPrice(state.feedInventory);
@@ -157,7 +157,7 @@ export function calculateSiloDepletion(totalSiloKg, dailyConsumptionKg) {
  * @returns {Array} Ayıklama önerilenler (zarar büyükten küçüğe). Dizi üzerinde `insufficientData` sayısı da bulunur.
  */
 export function generateCullingList() {
-  const state = getState();
+  const state = readState();
   const animals = state.animals || [];
   const feedPrice = getAverageFeedPrice(state.feedInventory);
   const excludedGroups = ['Damızlık', 'Gebe', 'Sağmal'];

@@ -90,7 +90,8 @@ flowchart LR
   state --> herdMath
   state --> mig
   state --> merge
-  state <--> sync
+  state --> sync
+  sync -. köprü .-> state
   sync --> merge
   sync --> mig
   herdMath --> bstat
@@ -113,7 +114,7 @@ flowchart LR
   breed --> state
   sens --> state
   router --> state
-  router <--> auth
+  auth --> router
   auth --> state
   auth --> sync
 ```
@@ -124,7 +125,9 @@ Saf modüller state'e bağımlı değildir; hem her `setState`'te çalışan `he
 - `syncMerge.js` — üç yönlü kayıt bazında birleştirme
 - `dateUtils.js` — yerel saat dilimine göre takvim tarihi (`todayIso`, `addDaysIso`, `daysBetweenIso`). `toISOString()` UTC verdiği için gün hesabında kullanılmaz.
 
-**Kalan döngüsel bağımlılıklar** (çalışıyor, ileride ele alınabilir): `state.js ⇄ syncManager.js`, `router.js ⇄ auth.js`.
+**Döngüsel bağımlılık yok.** İki eski döngü bağımlılık ters çevrilerek kırıldı:
+- `syncManager` artık `state`'i import etmiyor; `state.js` yüklenirken `connectStateBridge()` ile kendi fonksiyonlarını kaydediyor.
+- `router` artık `auth`'u import etmiyor; oturum kontrolü `app.js`'ten `initRouter({ isAuthenticated })` ile veriliyor.
 
 ### 3.2 UI → Core bağlantıları
 
@@ -391,8 +394,24 @@ Bildirimler `{ source, keys }` meta bilgisi taşır: `local`, `cloud`, `load`, `
 | — | İki cihazdan eşzamanlı düzenlemede veri kaybı | Kayıt bazında birleştirme + iyimser kilit |
 | — | Stok formunda SKT boşsa 2027-12-31 uyduruluyordu, birim karışıklığı | SKT zorunlu, birim ilacın doz birimi |
 
-### Açık olanlar
+### Çözülenler (3. tur: kalan mimari konular)
 
-- **Her `setState` maliyetli:** özet yeniden hesaplama + tüm state'in JSON'a yazılması + `getState()` derin kopyası.
-- **Döngüsel importlar:** `state⇄sync`, `router⇄auth`.
-- **`animal-profile` boş alanları sahte veriyle dolduruyor:** eksik alanlar `mock-data.animalData`'dan geliyor.
+**Performans.** Ölçümler 1500 hayvan ve 1500 tedavi kaydıyla yapıldı.
+
+| İşlem | Önce | Sonra |
+|---|---|---|
+| Tek değişiklik (`setState` + kayıt) | 60 ms | 21 ms |
+| Sürü listesi çizimi | 174 ms | 25 ms |
+| Dashboard çizimi | 105 ms | 20 ms |
+| Karantina listesi | 51 ms | 7 ms |
+
+- Karantina hesabı tedavi kayıtlarını tek geçişte, hayvan bazında gruplayarak yapıyor (önceden her hayvan için tüm kayıtlar taranıyordu).
+- Salt okuma yapan core fonksiyonları `readState()` ile kopyasız okuyor. UI ve yazma yapan kod `getState()` derin kopyasını kullanmaya devam ediyor.
+- Abonelere her bildirimde derin kopya gönderilmiyor; abone gerekirse kendisi `getState()` çağırıyor.
+- Aynı işlem içindeki ardışık `setState` çağrıları tek bir localStorage yazımında birleşiyor (mikro-görev). Yazım, tarayıcı bir sonraki olaya geçmeden tamamlanıyor.
+
+**Döngüsel importlar.** Kaldırıldı (bkz. 3.1).
+
+**Demo verisi sızıntısı.** Hayvan profili eksik alanları artık demo verisiyle doldurmuyor; eksik alan "—" ya da "Bilinmiyor" görünüyor.
+- Yaşı bilinmeyen hayvanda "NaNY NaNA" yerine "Bilinmiyor" yazıyor.
+- `mock-data.js` yalnızca demo tohum verisini içeriyor; kullanılmayan 7 sahte veri kaldırıldı.

@@ -2,8 +2,7 @@
  * ShepherdAI — Hayvan Profili ve Genetik Pasaport Modülü (Tabbed Structure)
  */
 
-import { todayIso, daysBetweenIso } from '../core/dateUtils.js';
-import { animalData } from '../data/mock-data.js';
+import { todayIso, daysBetweenIso, isValidIsoDate } from '../core/dateUtils.js';
 import { getState, getAnimalById } from '../core/state.js';
 import { showAlert, showPrompt, showConfirm, showSelect, showFormModal } from '../core/modal.js';
 import { navigateTo } from '../core/router.js';
@@ -54,29 +53,32 @@ export function render() {
   const activeId = state.activeAnimalId || (animals.length > 0 ? animals[0].id : null);
   const rawAnimal = getAnimalById(activeId) || animals[0] || {};
   
+  // Yalnızca kayıtlı veri gösterilir; eksik alan "—" / "Bilinmiyor" olarak görünür (demo verisiyle doldurulmaz)
+  const NA = '—';
+  const hasNum = (v) => v !== undefined && v !== null && v !== '' && !isNaN(parseFloat(v)) && parseFloat(v) > 0;
   const currentAnimal = {
-    tagID: rawAnimal.id || animalData.tagID,
+    tagID: rawAnimal.id,
     nickname: rawAnimal.nickname || '',
-    rfidCode: rawAnimal.rfid || animalData.rfidCode,
-    breed: rawAnimal.breed ? `${rawAnimal.breed} ${rawAnimal.type ? `(${rawAnimal.type})` : ''}` : animalData.breed,
+    rfidCode: rawAnimal.rfid || 'RFID yok',
+    breed: rawAnimal.breed ? `${rawAnimal.breed} ${rawAnimal.type ? `(${rawAnimal.type})` : ''}` : (rawAnimal.type || 'Irk bilinmiyor'),
     type: rawAnimal.type || '',
-    gender: rawAnimal.gender || animalData.gender,
-    currentWeight: rawAnimal.weight || animalData.currentWeight,
-    birthDate: rawAnimal.birthDate || animalData.birthDate,
-    birthWeight: rawAnimal.birthWeight || animalData.birthWeight,
-    bcsScore: rawAnimal.bcs || animalData.bcsScore,
-    healthStatus: rawAnimal.status || animalData.healthStatus,
-    geneticsScore: rawAnimal.yieldScore || animalData.geneticsScore,
+    currentWeight: hasNum(rawAnimal.weight) ? `${rawAnimal.weight} kg` : NA,
+    birthDate: rawAnimal.birthDate,
+    birthWeight: hasNum(rawAnimal.birthWeight) ? `${rawAnimal.birthWeight} kg` : NA,
+    hasBcs: hasNum(rawAnimal.bcs),
+    bcsScore: hasNum(rawAnimal.bcs) ? parseFloat(rawAnimal.bcs) : 3,
+    healthStatus: rawAnimal.status || 'good',
+    geneticsScore: hasNum(rawAnimal.yieldScore) ? `${rawAnimal.yieldScore}/100` : NA,
     focus: rawAnimal.focus || 'meat',
     lineage: {
-      mother: rawAnimal.mother !== undefined ? rawAnimal.mother : (rawAnimal.lineage?.mother || 'Bilinmiyor'),
-      father: rawAnimal.father !== undefined ? rawAnimal.father : (rawAnimal.lineage?.father || 'Bilinmiyor')
+      mother: rawAnimal.mother || 'Bilinmiyor',
+      father: rawAnimal.father || 'Bilinmiyor'
     },
-    genetics: rawAnimal.genetics || animalData.genetics || { meat: 80, milk: 50, fertility: 75, resistance: 90, growth: 85 },
-    gender: rawAnimal.gender || animalData.gender || 'Dişi',
+    gender: rawAnimal.gender || 'Bilinmiyor',
     group: rawAnimal.group || 'Besi',
-    rawGender: rawAnimal.gender || animalData.gender || 'Dişi'
+    rawGender: rawAnimal.gender || ''
   };
+
 
   const nicknameBadge = currentAnimal.nickname
     ? `<span style="font-size:0.95rem; color:var(--accent-blue); font-weight:600; margin-left:6px;">("${currentAnimal.nickname}")</span>`
@@ -208,7 +210,7 @@ function _renderInfoTab(animal) {
       ` : ''}
       <div class="animal-data-card">
         <span class="animal-data-label">Ağırlık</span>
-        <span class="animal-data-value" id="disp-weight">${animal.currentWeight} kg</span>
+        <span class="animal-data-value" id="disp-weight">${animal.currentWeight}</span>
       </div>
       <div class="animal-data-card">
         <span class="animal-data-label">Yaş</span>
@@ -219,8 +221,8 @@ function _renderInfoTab(animal) {
         <span class="animal-data-value">${animal.gender} ${animal.type ? `(${animal.type})` : ''}</span>
       </div>
       <div class="animal-data-card full-span" style="grid-column: span 3; flex-direction: row; justify-content: space-between;">
-        <span class="animal-data-label">Doğum Ağırlığı: <strong style="color:var(--text-primary)">${animal.birthWeight} kg</strong></span>
-        <span class="animal-data-label">Genetik Skor: <strong style="color:var(--accent-green)">${animal.geneticsScore}/100</strong></span>
+        <span class="animal-data-label">Doğum Ağırlığı: <strong style="color:var(--text-primary)">${animal.birthWeight}</strong></span>
+        <span class="animal-data-label">Genetik Skor: <strong style="color:var(--accent-green)">${animal.geneticsScore}</strong></span>
       </div>
     </div>
 
@@ -229,7 +231,7 @@ function _renderInfoTab(animal) {
     <div class="glass-card bcs-container">
       <div class="bcs-header">
         <span style="font-size:var(--font-size-sm);color:var(--text-secondary)">Yağlılık Skoru</span>
-        <span class="bcs-value" id="bcs-display">${animal.bcsScore}</span>
+        <span class="bcs-value" id="bcs-display">${animal.hasBcs ? animal.bcsScore : '—'}</span>
       </div>
       <div class="bcs-slider-wrapper">
         <input type="range" min="1" max="5" step="0.5" value="${animal.bcsScore}" class="bcs-slider" id="bcs-input" data-tag="${animal.tagID}">
@@ -1099,53 +1101,17 @@ function _renderMedicalHistory(animalId) {
 }
 
 function _calculateAge(birthDateString) {
-  if(!birthDateString) return '1.5 Yaşında';
+  // Doğum tarihi yoksa ya da geçersizse ('Bilinmiyor' vb.) yaş uydurulmaz
+  if (!isValidIsoDate(birthDateString)) return 'Bilinmiyor';
   const birth = new Date(birthDateString);
-  const now = new Date(); 
+  const now = new Date();
   let months = (now.getFullYear() - birth.getFullYear()) * 12;
   months -= birth.getMonth();
   months += now.getMonth();
+  if (now.getDate() < birth.getDate()) months -= 1;
   if (months < 0) months = 0;
   if (months < 12) return `${months} Aylık`;
   const years = Math.floor(months / 12);
   const remainder = months % 12;
   return remainder > 0 ? `${years}Y ${remainder}A` : `${years} Yaşında`;
-}
-
-function _generateRadarChart(dataA, dataB) {
-  const size = 180;
-  const cx = size / 2, cy = size / 2, r = 70;
-  const angles = [-Math.PI/2, -Math.PI/2+(2*Math.PI)/5, -Math.PI/2+(4*Math.PI)/5, -Math.PI/2+(6*Math.PI)/5, -Math.PI/2+(8*Math.PI)/5];
-  const labels = ['Et', 'Süt', 'Döl', 'Direnç', 'Büyüme'];
-
-  let bgHtml = '';
-  [0.2, 0.4, 0.6, 0.8, 1.0].forEach(l => {
-    const pts = angles.map(a => `${cx + Math.cos(a)*(r*l)},${cy + Math.sin(a)*(r*l)}`).join(' ');
-    bgHtml += `<polygon points="${pts}" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="1"/>`;
-  });
-
-  let axisHtml = '', labelHtml = '';
-  angles.forEach((a, i) => {
-    const px = cx + Math.cos(a)*r, py = cy + Math.sin(a)*r;
-    axisHtml += `<line x1="${cx}" y1="${cy}" x2="${px}" y2="${py}" stroke="rgba(255,255,255,0.2)" stroke-width="1"/>`;
-    const lx = cx + Math.cos(a)*(r + 15), ly = cy + Math.sin(a)*(r + 15);
-    labelHtml += `<text x="${lx}" y="${ly}" fill="var(--text-muted)" font-size="8" text-anchor="middle" dominant-baseline="middle">${labels[i]}</text>`;
-  });
-
-  const getPts = (d) => [d.meat, d.milk, d.fertility, d.resistance, d.growth].map((val, i) => {
-    const l = val / 100;
-    return `${cx + Math.cos(angles[i])*(r*l)},${cy + Math.sin(angles[i])*(r*l)}`;
-  }).join(' ');
-
-  const oA = getPts(dataA), oB = getPts(dataB);
-  return `
-    <div style="display:flex; justify-content:center;">
-      <svg width="${size}" height="${size}">
-        ${bgHtml} ${axisHtml}
-        <polygon points="${oA}" fill="var(--accent-green)" fill-opacity="0.3" stroke="var(--accent-green)" stroke-width="2"/>
-        <polygon points="${oB}" fill="#f97316" fill-opacity="0.3" stroke="#f97316" stroke-width="2"/>
-        ${labelHtml}
-      </svg>
-    </div>
-  `;
 }

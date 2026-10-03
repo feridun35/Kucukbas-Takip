@@ -54,7 +54,7 @@ export function addAnimal(input) {
     return { success: false, message: `${id} küpe numarası sürüde zaten kayıtlı.` };
   }
 
-  let birthDate = 'Bilinmiyor';
+  let birthDate = null; // Yaş girilmezse doğum tarihi bilinmiyor (uydurulmaz)
   if (input.ageMonths !== undefined && String(input.ageMonths).trim() !== '') {
     const ageMonths = parseInt(input.ageMonths, 10);
     if (!isNaN(ageMonths) && ageMonths >= 0) {
