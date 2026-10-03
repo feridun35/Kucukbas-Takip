@@ -54,6 +54,8 @@ export const SYNC_STATUS = {
 };
 
 let _supabaseClient = null;
+// Son eşitleme hatası (kullanıcıya gösterilir): { reason, message, technical, at }
+let _lastError = null;
 const _debounceTimers = new Map();
 const _pushInFlight = new Map();   // tenantKey → Promise
 const _pushQueued = new Set();
@@ -143,7 +145,7 @@ export function getSyncStatusInfo() {
     case SYNC_STATUS.OFFLINE:
       return { status: SYNC_STATUS.OFFLINE, icon: '⚪', text: 'Çevrimdışı', color: 'var(--color-text-muted, #94a3b8)' };
     case SYNC_STATUS.ERROR:
-      return { status: SYNC_STATUS.ERROR, icon: '🔴', text: 'Eşitleme Hatası', color: 'var(--color-danger, #ef4444)' };
+      return { status: SYNC_STATUS.ERROR, icon: '🔴', text: 'Eşitleme Hatası', color: 'var(--color-danger, #ef4444)', error: getLastSyncError() };
     case SYNC_STATUS.LOCAL:
       return { status: SYNC_STATUS.LOCAL, icon: '💾', text: 'Yalnızca Bu Cihaz', color: 'var(--color-text-muted, #94a3b8)' };
     default:
@@ -152,13 +154,50 @@ export function getSyncStatusInfo() {
 }
 
 export function setSyncStatus(status) {
+  if (status === SYNC_STATUS.SYNCED || status === SYNC_STATUS.LOCAL) _lastError = null;
   if (_currentStatus !== status) {
     _currentStatus = status;
-    const info = getSyncStatusInfo();
-    _statusSubscribers.forEach(cb => {
-      try { cb(info); } catch (e) { console.error('[SyncManager] Callback error:', e); }
-    });
+    _notifyStatus();
   }
+}
+
+function _notifyStatus() {
+  const info = getSyncStatusInfo();
+  _statusSubscribers.forEach(cb => {
+    try { cb(info); } catch (e) { console.error('[SyncManager] Callback error:', e); }
+  });
+}
+
+/** Hatanın kullanıcıya gösterilecek açıklaması */
+export function describeSyncError(err) {
+  const code = String(err?.code || '');
+  const msg = String(err?.message || err || '');
+  const technical = [code, msg].filter(Boolean).join(' — ') || 'Bilinmeyen hata';
+  const out = (reason, message) => ({ reason, message, technical });
+
+  if (code === 'NO_SESSION') return out('session', 'Bulut oturumu bulunamadı veya süresi doldu. Çıkış yapıp yeniden giriş yapın.');
+  if (code === 'SESSION_MISMATCH') return out('session', 'Tarayıcıdaki bulut oturumu başka bir hesaba ait. Çıkış yapıp yeniden giriş yapın.');
+  if (code === 'HIDDEN_ROW') return out('hidden-row', 'Bulutta bu hesaba ait bir kayıt var ama sahibi tanımlı olmadığı için erişilemiyor. Supabase SQL Editor\'da data/schema.sql dosyasını yeniden çalıştırın (sahipsiz kayıtları onarır).');
+  if (code === 'CONFLICT_RETRIES') return out('conflict', 'Bulut kaydı art arda güncellenemedi (başka cihazla çakışma). Birkaç saniye sonra yeniden denenecek.');
+  if (code === 'PGRST301' || code === 'PGRST303' || /jwt|token/i.test(msg)) return out('session', 'Bulut oturumunun süresi dolmuş. Çıkış yapıp yeniden giriş yapın.');
+  if (code === '42501' || /row-level security|permission denied/i.test(msg)) return out('rls', 'Supabase erişim kuralı (RLS) bu işlemi reddetti. data/schema.sql dosyasının güncel hâli çalıştırılmamış olabilir.');
+  if (code === '42P01' || code === 'PGRST205' || /does not exist|could not find the table/i.test(msg)) return out('schema', 'Bulutta farms_data tablosu bulunamadı. Supabase SQL Editor\'da data/schema.sql dosyasını çalıştırın.');
+  if (/failed to fetch|networkerror|load failed|network request failed/i.test(msg)) return out('network', 'Sunucuya ulaşılamadı. İnternet bağlantınızı ya da reklam/izleyici engelleyiciyi kontrol edin.');
+  if (code === '413' || /payload too large|request entity too large/i.test(msg)) return out('size', 'Çiftlik verisi bulut sınırını aşıyor.');
+  return out('unknown', 'Beklenmeyen bir eşitleme hatası oluştu.');
+}
+
+/** Hata durumunu nedeniyle birlikte yayınlar */
+function _reportError(stage, err) {
+  _lastError = { ...describeSyncError(err), stage, at: new Date().toISOString() };
+  console.error(`[SyncManager] Eşitleme hatası (${stage}):`, _lastError.technical);
+  if (_currentStatus !== SYNC_STATUS.ERROR) _currentStatus = SYNC_STATUS.ERROR;
+  _notifyStatus();
+}
+
+/** Son eşitleme hatası (yoksa null) */
+export function getLastSyncError() {
+  return _lastError ? { ..._lastError } : null;
 }
 
 // ═══════════════════════════════════════════
@@ -256,9 +295,16 @@ async function _readyClient(tenantKey) {
     setSyncStatus(SYNC_STATUS.OFFLINE);
     return null;
   }
-  const session = await _getSession();
+  let session = await _getSession();
+  if (!session) {
+    // Erişim belirteci yenilenememiş olabilir: bir kez yenilemeyi dene
+    try {
+      const { data } = await client.auth.refreshSession();
+      session = data?.session || null;
+    } catch (e) {}
+  }
   if (!_isOwnTenant(session, tenantKey)) {
-    setSyncStatus(SYNC_STATUS.ERROR);
+    _reportError('oturum', { code: session ? 'SESSION_MISMATCH' : 'NO_SESSION' });
     return null;
   }
   return { client, session };
@@ -295,8 +341,8 @@ async function _syncOnLoad(tenantKey) {
   try {
     remote = await _fetchRemote(ready.client, tenantKey);
   } catch (err) {
-    console.error('[SyncManager] Bulut okuması başarısız — push yapılmayacak, daha sonra tekrar denenecek:', err.message || err);
-    setSyncStatus(SYNC_STATUS.ERROR);
+    // Bulut okunamadan push yapılmaz; periyodik kontrol yeniden dener
+    _reportError('bulut okuma', err);
     return false;
   }
 
@@ -311,11 +357,16 @@ async function _syncOnLoad(tenantKey) {
     return true;
   }
 
-  if (!meta.dirty) {
-    _adoptCloud(tenantKey, remote);
-  } else if (remote.updated_at !== meta.cloudUpdatedAt) {
-    console.log('[SyncManager] 🔀 Yerel (gönderilmemiş) ve bulut değişiklikleri birleştiriliyor...');
-    _reconcileWithCloud(tenantKey, remote);
+  try {
+    if (!meta.dirty) {
+      _adoptCloud(tenantKey, remote);
+    } else if (remote.updated_at !== meta.cloudUpdatedAt) {
+      console.log('[SyncManager] 🔀 Yerel (gönderilmemiş) ve bulut değişiklikleri birleştiriliyor...');
+      _reconcileWithCloud(tenantKey, remote);
+    }
+  } catch (err) {
+    _reportError('bulut verisini uygulama', err);
+    return false;
   }
 
   setCloudLoadDone(tenantKey, true);
@@ -385,7 +436,7 @@ async function _pushWithRetry(tenantKey) {
     if (result !== 'conflict') return result === 'ok';
     console.log(`[SyncManager] ↻ Bulut başka cihazdan değişti, birleştirilip tekrar deneniyor (${attempt}/${MAX_PUSH_ATTEMPTS}).`);
   }
-  setSyncStatus(SYNC_STATUS.ERROR);
+  _reportError('gönderim', { code: 'CONFLICT_RETRIES' });
   return false;
 }
 
@@ -435,7 +486,12 @@ async function _pushOnce(tenantKey) {
         .select('updated_at')
         .single();
       if (error) {
-        if (error.code === '23505') return 'conflict'; // arada başka cihaz oluşturdu
+        if (error.code === '23505') {
+          // Arada başka cihaz oluşturduysa artık görünür → birleştirip tekrar dene.
+          // Hâlâ görünmüyorsa satır var ama RLS gizliyor (sahibi boş) → tekrar denemek işe yaramaz.
+          if (await _fetchRemote(client, tenantKey, 'updated_at')) return 'conflict';
+          throw { code: 'HIDDEN_ROW', message: `${tenantKey} kaydı var ama okunamıyor (owner_id)` };
+        }
         throw error;
       }
       newUpdatedAt = data.updated_at;
@@ -453,8 +509,7 @@ async function _pushOnce(tenantKey) {
     if (after.dirty) _pushQueued.add(tenantKey);
     return 'ok';
   } catch (err) {
-    console.error('[SyncManager] Supabase push hatası:', err.message || err);
-    setSyncStatus(SYNC_STATUS.ERROR);
+    _reportError('gönderim', err);
     return 'error';
   }
 }
@@ -517,6 +572,19 @@ export async function checkForCloudUpdates() {
     setSyncStatus(SYNC_STATUS.SYNCED);
   } catch (e) {
     console.error('[SyncManager] Cloud update check hatası:', e.message || e);
+  }
+}
+
+/** "Tekrar dene": açılış eşitlemesi yapılmadıysa onu, yapıldıysa bekleyen gönderimi / bulut kontrolünü çalıştırır */
+export async function retrySync() {
+  const tenantKey = _state.getState().currentTenantKey;
+  if (!tenantKey || !_isCurrentTenant(tenantKey)) return;
+  if (!_cloudLoadDoneSet.has(tenantKey)) {
+    await syncOnLoad(tenantKey);
+  } else if (getSyncMeta(tenantKey).dirty) {
+    await _runPush(tenantKey);
+  } else {
+    await checkForCloudUpdates();
   }
 }
 
