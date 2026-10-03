@@ -5,8 +5,8 @@
 
 import { getState, setState } from '../core/state.js';
 import { showAlert, showFormModal } from '../core/modal.js';
-import { addAnimal } from '../core/herdManager.js';
-import { BREED_OPTIONS, ANIMAL_TYPES, ANIMAL_GROUPS } from '../data/herd-constants.js';
+import { addAnimal, isWeightPlausible, getWeightRange } from '../core/herdManager.js';
+import { BREED_OPTIONS, ANIMAL_TYPES, ANIMAL_GROUPS, ANIMAL_LIMITS } from '../data/herd-constants.js';
 import { getAllQuarantinedAnimals } from '../core/healthManager.js';
 
 let _container = null;
@@ -159,7 +159,7 @@ function _renderAnimalCard(animal) {
         <div style="font-size:0.75rem; color:var(--text-secondary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${animal.breed} ${animal.type ? `(${animal.type})` : ''} &bull; ${animal.group}</div>
       </div>
       <div class="a-metrics" style="text-align:right; flex-shrink:0;">
-        <div style="font-size:0.9rem; font-weight:700; white-space:nowrap;">${animal.weight !== 'Bilinmiyor' && animal.weight > 0 ? animal.weight + ' kg' : '-'}</div>
+        <div style="font-size:0.9rem; font-weight:700; white-space:nowrap;">${animal.weight > 0 ? animal.weight + ' kg' : '-'}${isWeightPlausible(animal) ? '' : ` <span title="${animal.type || 'Bu tür'} için beklenen aralık ${getWeightRange(animal.type).join('–')} kg. Hayvan profilinden tartım kaydını düzeltin." style="color:var(--warning-orange);">⚠️</span>`}</div>
         <div style="font-size:0.75rem; color:${statusColor}; white-space:nowrap;">${statusIcon} Skor: ${animal.yieldScore || '-'}</div>
       </div>
     </div>
@@ -215,26 +215,30 @@ function _attachEvents() {
     const femaleOpts = ['Bilinmiyor', ...(state.animals || []).filter(a => a.gender === 'Dişi').map(a => a.id)];
     const maleOpts = ['Bilinmiyor', ...(state.animals || []).filter(a => a.gender === 'Erkek').map(a => a.id)];
 
-    const result = await showFormModal('Yeni Hayvan Kaydı', [
-      { id: 'id', label: 'Küpe No (RFID ile tarayabilirsiniz)', type: 'text', placeholder: 'Örn: TR-500' },
-      { id: 'nickname', label: 'Hayvan Lakabı / İsim (Opsiyonel)', type: 'text', placeholder: 'Örn: Pamuk, Kral, Karabaş' },
-      { id: 'type', label: 'Hayvan Türü / Kategorisi', type: 'select', options: ANIMAL_TYPES },
-      { id: 'breed', label: 'Irk', type: 'select', options: BREED_OPTIONS },
-      { id: 'gender', label: 'Cinsiyet', type: 'select', options: ['Dişi', 'Erkek'] },
-      { id: 'group', label: 'Grup', type: 'select', options: ANIMAL_GROUPS },
-      { id: 'weight', label: 'Güncel Ağırlık (kg)', type: 'number', placeholder: 'Örn: 45' },
-      { id: 'ageMonths', label: 'Yaş (ay olarak)', type: 'number', placeholder: 'Örn: 18' },
-      { id: 'purchasePrice', label: 'Alış Fiyatı (₺, opsiyonel — kârlılık hesabı için)', type: 'number', placeholder: 'Sürüde doğduysa boş bırakın' },
-      { id: 'mother', label: 'Ana Küpe No', type: 'select', options: femaleOpts },
-      { id: 'father', label: 'Baba Küpe No', type: 'select', options: maleOpts }
+    // Hatalı girişte form, girilen değerlerle yeniden açılır (alanları baştan doldurmak gerekmez)
+    let draft = {};
+    let added = null;
+    while (!added?.success) {
+      const result = await showFormModal('Yeni Hayvan Kaydı', [
+      { id: 'id', value: draft.id, label: 'Küpe No (RFID ile tarayabilirsiniz)', type: 'text', placeholder: 'Örn: TR-500' },
+      { id: 'nickname', value: draft.nickname, label: 'Hayvan Lakabı / İsim (Opsiyonel)', type: 'text', placeholder: 'Örn: Pamuk, Kral, Karabaş' },
+      { id: 'type', value: draft.type, label: 'Hayvan Türü / Kategorisi', type: 'select', options: ANIMAL_TYPES },
+      { id: 'breed', value: draft.breed, label: 'Irk', type: 'select', options: BREED_OPTIONS },
+      { id: 'gender', value: draft.gender, label: 'Cinsiyet', type: 'select', options: ['Dişi', 'Erkek'] },
+      { id: 'group', value: draft.group, label: 'Grup', type: 'select', options: ANIMAL_GROUPS },
+      { id: 'weight', value: draft.weight, label: `Güncel Ağırlık (kg, ${ANIMAL_LIMITS.defaultWeightKg[0]}–${ANIMAL_LIMITS.defaultWeightKg[1]})`, type: 'number', placeholder: 'Örn: 45', min: ANIMAL_LIMITS.defaultWeightKg[0], max: ANIMAL_LIMITS.defaultWeightKg[1], step: 0.1 },
+      { id: 'ageMonths', value: draft.ageMonths, label: `Yaş (ay, 0–${ANIMAL_LIMITS.maxAgeMonths})`, type: 'number', placeholder: 'Örn: 18', min: 0, max: ANIMAL_LIMITS.maxAgeMonths, step: 1 },
+      { id: 'purchasePrice', value: draft.purchasePrice, label: 'Alış Fiyatı (₺, opsiyonel — kârlılık hesabı için)', type: 'number', placeholder: 'Sürüde doğduysa boş bırakın' },
+      { id: 'mother', value: draft.mother, label: 'Ana Küpe No', type: 'select', options: femaleOpts },
+      { id: 'father', value: draft.father, label: 'Baba Küpe No', type: 'select', options: maleOpts }
     ], '🐑');
+      if (!result || !result.id || result.id.trim() === '') return;
 
-    if (!result || !result.id || result.id.trim() === '') return;
-
-    const added = addAnimal(result);
-    if (!added.success) {
-      await showAlert('Kayıt Yapılamadı', added.message, '⚠️');
-      return;
+      added = addAnimal(result);
+      if (!added.success) {
+        await showAlert('Kayıt Yapılamadı', added.message, '⚠️');
+        draft = result;
+      }
     }
 
     const newAnimal = added.animal;

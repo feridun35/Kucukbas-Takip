@@ -12,7 +12,7 @@ import { calculateAnimalROI } from '../core/financeEngine.js';
 import { getTasksForUser, getTaskHistory, addTask, completeTask, TASK_TYPES } from '../core/workforceManager.js';
 import { getAnimalWithdrawalStatus } from '../core/healthManager.js';
 import { isVaccineRecord, recordTargetsAnimal } from '../core/healthRecords.js';
-import { updateAnimal, registerBirth, recordDeath, estimateLossFromWeight } from '../core/herdManager.js';
+import { updateAnimal, registerBirth, recordDeath, estimateLossFromWeight, getWeightRange, isWeightPlausible } from '../core/herdManager.js';
 import { DEATH_REASONS } from '../data/herd-constants.js';
 import { openTreatmentModal } from './treatment-modal.js';
 import { openBreedingModal } from './breeding-modal.js';
@@ -62,7 +62,9 @@ export function render() {
     rfidCode: rawAnimal.rfid || 'RFID yok',
     breed: rawAnimal.breed ? `${rawAnimal.breed} ${rawAnimal.type ? `(${rawAnimal.type})` : ''}` : (rawAnimal.type || 'Irk bilinmiyor'),
     type: rawAnimal.type || '',
-    currentWeight: hasNum(rawAnimal.weight) ? `${rawAnimal.weight} kg` : NA,
+    currentWeight: hasNum(rawAnimal.weight)
+      ? `${rawAnimal.weight} kg${isWeightPlausible(rawAnimal) ? '' : ' ⚠️'}`
+      : NA,
     birthDate: rawAnimal.birthDate,
     birthWeight: hasNum(rawAnimal.birthWeight) ? `${rawAnimal.birthWeight} kg` : NA,
     hasBcs: hasNum(rawAnimal.bcs),
@@ -290,13 +292,15 @@ function _initInfoTab() {
       const animal = _getActiveAnimal();
       if (!animal) return;
 
-      const newWeight = await showPrompt('Ağırlık Güncelle', `Mevcut Ağırlık: ${animal.weight || ''} kg\nYeni ağırlığı giriniz (kg):`, 'number', '⚖️');
-      const parsedW = parseFloat(newWeight);
-      if (!isNaN(parsedW) && parsedW > 0) {
-        updateAnimal(animal.id, { weight: parsedW });
-        await showAlert('Başarılı', `${animal.id} için yeni ağırlık (${parsedW} kg) sisteme kaydedildi.`, '✅');
-        _rerender();
+      const newWeight = await showPrompt('Ağırlık Güncelle', `Mevcut Ağırlık: ${animal.weight || '—'} kg\nYeni ağırlığı giriniz (${getWeightRange(animal.type).join('–')} kg):`, 'number', '⚖️');
+      if (newWeight === null || String(newWeight).trim() === '') return;
+      const res = updateAnimal(animal.id, { weight: newWeight });
+      if (!res.success) {
+        await showAlert('Ağırlık Kaydedilemedi', res.message, '⚠️');
+        return;
       }
+      await showAlert('Başarılı', `${animal.id} için yeni ağırlık (${res.animal.weight} kg) sisteme kaydedildi.`, '✅');
+      _rerender();
     });
   }
 }
@@ -714,7 +718,7 @@ function _initHealthTab() {
 
       if (babies.length === 0) return;
       await showAlert('Doğum Kaydedildi! 🎉',
-        `${mother.id} → ${babies.map(b => `${b.id} (${b.gender}, ${b.birthWeight} kg)`).join(', ')}\n` +
+        `${mother.id} → ${babies.map(b => `${b.id} (${b.gender}${b.birthWeight ? `, ${b.birthWeight} kg` : ''})`).join(', ')}\n` +
         `Baba: ${fatherTag || 'Bilinmiyor'}\n\n${babies.length} yavru sürüye eklendi.`, '🐣');
       _rerender();
     });
