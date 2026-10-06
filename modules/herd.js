@@ -27,11 +27,11 @@ export function render() {
         <p style="font-size:0.7rem; color:var(--text-muted);">Genetik simülasyon ve gebelik takibi</p>
       </div>
 
-      <!-- Box 2: Pasaport -->
+      <!-- Box 2: Hayvan Profili -->
       <div id="btn-goto-passport" class="glass-card hub-box" style="display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:var(--space-lg) var(--space-md); cursor:pointer; min-height:140px; border-color:rgba(16, 185, 129, 0.3); transition:all 0.2s;">
         <span style="font-size:2.5rem; margin-bottom:12px;">📘</span>
-        <h4 style="font-size:0.95rem; color:var(--text-primary); margin-bottom:4px;">Hayvan Pasaportu</h4>
-        <p style="font-size:0.7rem; color:var(--text-muted);">Bireysel hayvan (TR-102) dijital profili</p>
+        <h4 style="font-size:0.95rem; color:var(--text-primary); margin-bottom:4px;">Hayvan Profili</h4>
+        <p style="font-size:0.7rem; color:var(--text-muted);">Son seçilen hayvanın kartı</p>
       </div>
 
       <!-- Box 3: Sürü Listesi -->
