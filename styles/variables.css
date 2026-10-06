@@ -39,6 +39,7 @@
 
   /* ── Status Colors ── */
   --danger-red: #ef4444;
+  --accent-red: var(--danger-red);
   --danger-red-glow: rgba(239, 68, 68, 0.25);
   --warning-orange: #f97316;
   --warning-orange-glow: rgba(249, 115, 22, 0.2);

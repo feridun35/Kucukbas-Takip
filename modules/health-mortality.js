@@ -14,7 +14,7 @@ let _container = null;
 export function render() {
   _container = document.createElement('div');
   _container.className = 'page-enter health-page';
-  _container.style.paddingBottom = '140px';
+  _container.style.paddingBottom = '220px';
 
   const state = getState();
   const records = state.mortalityRecords || [];

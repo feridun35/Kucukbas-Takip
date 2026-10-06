@@ -68,7 +68,9 @@ ul, ol { list-style: none; }
 
 /* ── Page Transitions ── */
 .page-enter {
-  animation: pageIn 0.35s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+  /* 'forwards' kullanılmaz: bitişte transform kalırsa sayfa, içindeki position:fixed alt butonlar için
+     kapsayıcı olur; butonlar ekrana değil sayfa kutusuna göre konumlanıp kısa sayfalarda içeriğin üstüne biner */
+  animation: pageIn 0.35s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 @keyframes pageIn {
@@ -1684,7 +1686,7 @@ ul, ol { list-style: none; }
 /* ── Fixed Bottom Actions ── */
 .tasks-fixed-bottom {
   position: fixed;
-  bottom: calc(var(--nav-height) + 10px);
+  bottom: calc(var(--nav-height) + 18px); /* senkron rozeti (nav üstüne taşar) ile çakışmasın */
   left: 50%;
   transform: translateX(-50%);
   width: 100%;
