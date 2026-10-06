@@ -1,5 +1,5 @@
 /**
- * ShepherdAI — Hayvan Profili ve Genetik Pasaport Modülü (Tabbed Structure)
+ * ShepherdAI — Hayvan Profili Modülü (Tabbed Structure)
  */
 
 import { todayIso, daysBetweenIso, isValidIsoDate } from '../core/dateUtils.js';
@@ -44,7 +44,7 @@ export function render() {
   if (animals.length === 0) {
     _container.innerHTML = `
       <div class="animal-header" style="justify-content:center; text-align:center;">
-        <h2 style="font-size:1.3rem; font-weight:700;">Hayvan Pasaportu</h2>
+        <h2 style="font-size:1.3rem; font-weight:700;">Hayvan Profili</h2>
       </div>
       <div class="glass-card" style="text-align:center; padding:48px 24px; border-radius:24px; border:1px dashed rgba(255,255,255,0.18); background:rgba(255,255,255,0.02); margin:20px 0;">
         <div style="font-size:3.5rem; margin-bottom:14px;">🐑</div>
@@ -132,7 +132,7 @@ export function render() {
         Görev
       </button>
       <button class="tab-btn ${_activeTab === 'passport' ? 'active' : ''}" data-tab="passport" style="flex:none; padding:12px 16px; background:none; border:none; color:${_activeTab==='passport'?'var(--accent-purple)':'var(--text-secondary)'}; border-bottom:${_activeTab==='passport'?'2px solid var(--accent-purple)':'2px solid transparent'}; font-weight:600; cursor:pointer; white-space:nowrap; transition:0.2s;">
-        Pasaport
+        Soy Ağacı
       </button>
     </div>
   `;
@@ -191,7 +191,6 @@ export function init() {
   });
 
   if (_activeTab === 'info') _initInfoTab();
-  if (_activeTab === 'passport') _initPassportTab();
   if (_activeTab === 'breeding') _initBreedingTab();
   if (_activeTab === 'health') _initHealthTab();
   if (_activeTab === 'finance') _initFinanceTab();
@@ -396,20 +395,7 @@ function _renderPassportTab(animal) {
         <span>${animal.tagID}</span>
       </div>
     </div>
-
-    <div class="bottom-action-container" style="position:relative !important; margin-top:var(--space-2xl); width:calc(100% - var(--space-lg)*2);">
-      <button class="huge-btn btn-secondary" id="btn-share" style="width:100%; border-radius:20px; padding:14px; border:1px solid rgba(168,85,247,0.4);">
-        <span class="btn-icon">🔗</span> Dijital Pasaportu Paylaş
-      </button>
-    </div>
   `;
-}
-
-function _initPassportTab() {
-  const btnShare = _container.querySelector('#btn-share');
-  if (btnShare) {
-    btnShare.addEventListener('click', () => showAlert('Genetik Pasaport', `[SIM] Bu hayvanın pasaportu WhatsApp vb. ile paylaşıldı.`, '🔗'));
-  }
 }
 
 // ═══════════════════════════════════════

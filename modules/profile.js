@@ -5,6 +5,8 @@
 import { escapeHtml } from '../core/sanitize.js';
 import { showAlert, showConfirm, showPrompt } from '../core/modal.js';
 import { getCurrentUser, logout, updateCurrentUser, claimLegacyData } from '../core/auth.js';
+import { exportFarmWorkbook } from '../core/exportManager.js';
+import { XLSX_MIME } from '../core/xlsxWriter.js';
 
 let _container = null;
 
@@ -96,6 +98,20 @@ export function render() {
 
     </div>
 
+    <div class="section-title"><span class="dot" style="background:var(--accent-green)"></span>Veri</div>
+    <div class="glass-card settings-list" style="padding:0; margin-bottom:var(--space-lg);">
+      <div class="setting-item" id="btn-export-excel" style="display:flex; align-items:center; justify-content:space-between; padding:var(--space-md); cursor:pointer; transition:background 0.2s;">
+        <div style="display:flex; align-items:center; gap:12px;">
+          <span style="font-size:1.2rem;">📊</span>
+          <div>
+            <h4 style="font-size:1rem; color:var(--text-primary);">Tüm Kayıtları Excel'e Aktar</h4>
+            <p style="font-size:0.75rem; color:var(--text-muted);">Sürü, tartım, sağlık, ilaç-aşı, katım-doğum, ölüm, yem ve görevler — tek dosyada</p>
+          </div>
+        </div>
+        <span style="color:var(--accent-green); font-weight:700; font-size:0.85rem;">⬇ .xlsx</span>
+      </div>
+    </div>
+
     <div style="margin-top:var(--space-xl);">
       <button id="btn-logout" class="btn-secondary" style="width:100%; border-radius:24px; padding:16px; font-size:1rem; color:var(--danger-red); border-color:rgba(239,68,68,0.3); background:rgba(239,68,68,0.05); font-weight:700; cursor:pointer;">
         🚪 Sistemden Çıkış Yap
@@ -108,6 +124,22 @@ export function render() {
 
 export function init() {
   if (!_container) return;
+
+  const btnExport = _container.querySelector('#btn-export-excel');
+  if (btnExport) {
+    btnExport.addEventListener('click', async () => {
+      try {
+        const { bytes, fileName, counts } = await exportFarmWorkbook(getCurrentUser());
+        _downloadFile(bytes, fileName, XLSX_MIME);
+        const total = counts.reduce((s, c) => s + c.rows, 0);
+        const lines = counts.filter(c => c.rows > 0).map(c => `• ${c.name}: ${c.rows}`).join('\n');
+        await showAlert('Excel Dosyası Hazır', `${fileName}\n\n${counts.length + 1} sayfa, toplam ${total} satır:\n${lines}`, '📊');
+      } catch (e) {
+        console.error('[Profile] Excel dışa aktarma hatası:', e);
+        await showAlert('Dışa Aktarılamadı', 'Excel dosyası oluşturulurken bir hata oluştu. Lütfen tekrar deneyin.', '⚠️');
+      }
+    });
+  }
 
   // Toggle switches
   const toggles = _container.querySelectorAll('.toggle-switch');
@@ -175,3 +207,17 @@ function _rerender() {
   init();
   window.scrollTo(0, scrollPos);
 }
+
+/** Tarayıcıda dosya indirir (veri cihazdan çıkmaz; sunucuya gönderilmez) */
+function _downloadFile(bytes, fileName, mime) {
+  const url = URL.createObjectURL(new Blob([bytes], { type: mime }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName;
+  a.style.display = 'none';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30000);
+}
+

@@ -124,6 +124,7 @@ Saf modüller state'e bağımlı değildir; hem her `setState`'te çalışan `he
 - `breedingStatus.js` — anaç bazında gebelik durumu, gebe hayvan listesi
 - `syncMerge.js` — üç yönlü kayıt bazında birleştirme
 - `observationRecords.js` — belirtiden hayvan durumu türetme, salgın şüphesi, ihbarı zorunlu belirti birlikteliği, uzun süre açık kalan belirtiler
+- `xlsxWriter.js` — bağımlılıksız Excel (.xlsx) üretici (tarayıcıda sıkıştırma)
 - `diagnosisEngine.js` — kural tabanlı ayırıcı tanı (36 hastalık), aciliyet, ayırt edici sorular
 - `performanceIndex.js` — kayıtlı verilerden damızlık skoru (büyüme, gebe kalma, batında yavru, yavru yaşatma, yavru büyümesi, hastalık direnci, ana-baba) ve beklenen yavru skoru
 - `sanitize.js` — HTML kaçışlama (`escapeHtml`), serbest metin temizleme (`stripTags`), küpe no karakter kuralı (`isValidTag`)
@@ -440,7 +441,6 @@ Bildirimler `{ source, keys }` meta bilgisi taşır: `local`, `cloud`, `load`, `
 ### Bilinen sınırlamalar / henüz yapılmamış özellikler
 
 - **Hayvan satışı kaydı yok.** Hayvan profili ve ROI'deki "Hızlı Satış" yalnızca bilgi mesajı gösteriyor; hayvan sürüden çıkmıyor, satış geliri kaydedilmiyor.
-- **Henüz çalışmayan düğme.** "Pasaportu Paylaş" yalnızca bilgi mesajı gösteriyor.
 - **Senkron yükü büyüyor.** Çiftlik verisi bulutta tek JSON satırı olarak tutuluyor ve her değişiklikte tamamı gönderiliyor. Örneğin 1500 hayvanda bu yaklaşık 0.5 MB eder. Yem geçmişi gibi listeler zamanla büyüdükçe bu boyut da artar.
 
 ## 8. Belirti Kaydı ve Sağlık Takibi
@@ -522,4 +522,20 @@ flowchart LR
 | Aciliyet | Olası (≥ %15) hastalıkların en yükseği + kırmızı bayraklar (yatma, solunum güçlüğü, düşük ısı, ≥ 41.5 °C, mor meme, idrar yapamama, ölüde kanama). |
 | Sorular | Üst sıradaki hastalıkları en çok ayıran, cevaplanmamış bulgular ("Bilmiyorum" denenler tekrar sorulmaz). |
 | Kayıt | Açık belirti kaydına `diagnoses[]` olarak eklenir; açık kayıt yoksa bulgulardan yeni belirti kaydı açılır (hayvan durumu yeniden hesaplanır). |
+
+## 11. Excel'e Dışa Aktarma
+
+Profil → **Veri → Tüm Kayıtları Excel'e Aktar**. Dosya tarayıcıda üretilir (`core/exportManager.js` → `core/xlsxWriter.js`), hiçbir sunucuya gönderilmez; harici kütüphane ve internet gerekmez.
+
+| Sayfa | Kaynak |
+|---|---|
+| Özet | Çiftlik/sahip bilgisi, sürü-sağlık-yem özetleri, sensör eşikleri, diğer ayarlar, sayfa başına kayıt sayısı |
+| Sürü | `animals` + yaş, tartım sayısı, açık belirti, damızlık skoru ve güveni, et/süt arınması kalan gün |
+| Tartımlar | Doğum ağırlığı + `weightHistory`; fark ve günlük artış |
+| Belirtiler / Ön Teşhisler | `healthObservations` ve her birinin `diagnoses[]` kayıtları |
+| Tedavi ve Aşı | `treatmentRecords` (doz, kür, arınma ve güvenli tarihler) |
+| Katımlar / Doğumlar | `breedingRecords` (anaç başına satır) ve `births[]` |
+| Ölümler, Yem Deposu, Yem Hareketleri, İlaç Deposu, Özel İlaçlar, Görevler | İlgili listeler (görevler: açık + geçmiş) |
+
+**Hiçbir alan kaybolmaz:** Tanımlı sütunlarda olmayan alanlar "Ek: alan", bölünmüş iç nesnelerin bilinmeyen alt alanları "Ek: nesne.alan" sütununa yazılır; tanınmayan kayıt türleri kendi adıyla ayrı sayfaya, tekil ayarlar Özet'e düşer. Kodlar okunur etiketlere çevrilir; `YYYY-MM-DD` değerleri gerçek Excel tarihi (gg.aa.yyyy) olur. 1500 hayvan / 16.500 tartımda üretim ~1 sn, dosya ~0.6 MB.
 

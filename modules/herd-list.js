@@ -185,7 +185,7 @@ function _attachEvents() {
     });
   }
 
-  // Hayvan Kartlarına Tıklayınca Pasaporta Git
+  // Hayvan kartına tıklayınca profile git
   _container.querySelectorAll('.animal-list-card').forEach(card => {
     card.addEventListener('click', (e) => {
       const animalId = e.currentTarget.dataset.id;
