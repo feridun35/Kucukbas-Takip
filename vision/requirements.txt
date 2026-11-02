@@ -1,0 +1,9 @@
+# Kamera yapay zekası servisi bağımlılıkları (Python 3.9+)
+# NVIDIA ekran kartı varsa önce https://pytorch.org adresindeki komutla CUDA'lı torch kurun,
+# sonra bu dosyayı kurun.
+ultralytics>=8.3
+opencv-python>=4.8
+numpy>=1.24
+PyYAML>=6.0
+requests>=2.31
+lap>=0.5.12             # ByteTrack takipçisi için

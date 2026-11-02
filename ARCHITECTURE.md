@@ -539,3 +539,29 @@ Profil → **Veri → Tüm Kayıtları Excel'e Aktar**. Dosya tarayıcıda üret
 
 **Hiçbir alan kaybolmaz:** Tanımlı sütunlarda olmayan alanlar "Ek: alan", bölünmüş iç nesnelerin bilinmeyen alt alanları "Ek: nesne.alan" sütununa yazılır; tanınmayan kayıt türleri kendi adıyla ayrı sayfaya, tekil ayarlar Özet'e düşer. Kodlar okunur etiketlere çevrilir; `YYYY-MM-DD` değerleri gerçek Excel tarihi (gg.aa.yyyy) olur. 1500 hayvan / 16.500 tartımda üretim ~1 sn, dosya ~0.6 MB.
 
+
+## 12. Kamera Yapay Zekası (`vision/`)
+
+Tarayıcı uygulamasından bağımsız, çiftlikteki bilgisayarda çalışan Python servisi. Kurulum adımları: `vision/README.md`.
+
+```mermaid
+flowchart LR
+  CAM["IP kameralar / NVR<br/>(RTSP)"] --> RD["camera.py<br/>en son kare"]
+  RD --> DET["detector.py<br/>YOLO 'sheep' + ByteTrack"]
+  DET --> ZT["zones.py (saf)<br/>bölge giriş-çıkış, süre"]
+  DET --> AL["alerts.py (saf)<br/>gece köpek/insan"]
+  DET --> PL["plan.py (saf)<br/>görüntü → plan (m)"]
+  ZT & AL & PL --> REP["reporter.py<br/>SQLite kuyruk → Supabase REST"]
+  REP --> T1[("vision_zone_visits<br/>vision_zone_counts<br/>vision_alerts")]
+  REP --> T2[("vision_live<br/>Realtime")]
+```
+
+| Kural | Değer |
+|---|---|
+| Gizlilik | Video makineden çıkmaz; yalnızca olay ve sayılar gönderilir. |
+| Kimlik doğrulama | Servis kullanıcının kendi hesabıyla giriş yapar; tablolar `owner_id = auth.uid()` RLS ile korunur (`data/schema.sql` §6). |
+| Bölge koordinatları | Normalize (0–1); ana/alt akış çözünürlüğünden bağımsız. Hayvan konumu = kutunun alt ortası (ayak noktası). |
+| Ziyaret | Bölgede ≥ `enter_confirm_s` görülünce giriş; `exit_grace_s` görülmeyince çıkış. Süre = ilk–son görülme. |
+| Çevrimdışı | Kayıtlar SQLite kuyruğunda bekler; canlı konum kuyruğa girmez (yalnızca en sonuncusu anlamlı). |
+| Kimlik sınırı | Takip numarası kameraya ve oturuma özeldir; küpe numarasıyla eşleştirme henüz yok. |
+| Henüz yok | Sitede canlı plan/harita sayfası ve bölge süresi raporları (`vision_live` Realtime aboneliği). |

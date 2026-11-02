@@ -1,0 +1,57 @@
+# ShepherdAI kamera yapay zekası — ayar dosyası
+# Bu dosyayı "config.yaml" adıyla kopyalayıp doldurun. config.yaml git'e gönderilmez (şifre içerir).
+
+cameras:
+  # Her kamera için bir blok. id: kısa, Türkçe karaktersiz bir ad (bölgeler ve site bu adla eşleşir).
+  - id: avlu
+    name: Avlu
+    # RTSP adresi (README "2. Kameranın RTSP adresini bulun"). Alt akış (düşük çözünürlük) yeterlidir ve bilgisayarı yormaz.
+    # Hikvision: rtsp://KULLANICI:SIFRE@192.168.1.64:554/Streaming/Channels/102
+    # Dahua:     rtsp://KULLANICI:SIFRE@192.168.1.108:554/cam/realmonitor?channel=1&subtype=1
+    # Deneme için video dosyası da verilebilir: source: ornek.mp4
+    source: rtsp://admin:SIFRE@192.168.1.64:554/Streaming/Channels/102
+    process_fps: 1          # saniyede incelenecek kare. Koyunlar yavaş hareket eder; 1–2 yeterli.
+    # (İsteğe bağlı) Kuşbakışı plan eşleştirmesi — "python -m shepherd_vision points --camera avlu" ile alınır.
+    # image_points: [[0.12, 0.85], [0.88, 0.83], [0.70, 0.35], [0.30, 0.36]]
+    # plan_points:  [[0, 0], [20, 0], [20, 15], [0, 15]]   # metre
+
+  # - id: ahir
+  #   name: Ahır içi
+  #   source: rtsp://admin:SIFRE@192.168.1.65:554/Streaming/Channels/102
+
+zones_file: zones.yaml      # "zones" komutu bu dosyayı oluşturur
+
+detection:
+  # yolo11n.pt: en hızlı (ekran kartsız bilgisayar). yolo11s.pt: daha isabetli, biraz daha yavaş.
+  # Kendi koyunlarınızla eğittiğiniz model: model: modeller/koyun.pt
+  model: yolo11n.pt
+  track_classes: [sheep]
+  confidence: 0.35          # düşürürseniz daha çok koyun bulur ama yanlış kutu da artar
+  image_size: 640           # uzaktaki küçük koyunlar kaçıyorsa 960 deneyin
+  device: ""                # boş: otomatik (NVIDIA kart varsa onu kullanır). "cpu" veya "0" yazılabilir.
+
+tracking:
+  enter_confirm_s: 3        # bölgede bu kadar saniye görülmeden giriş sayılmaz
+  exit_grace_s: 10          # bu kadar saniye görülmezse bölgeden çıkmış sayılır
+
+alerts:
+  enabled: true
+  classes: [dog, person, bear]   # hazır modelde kurt yok; kurt genelde "dog" olarak görülür
+  hours: "20:00-06:00"           # yalnızca bu saatlerde uyar. Boş bırakılırsa her saat.
+  min_confidence: 0.5
+  cooldown_s: 300                # aynı kamera ve tür için 5 dakikada en fazla bir uyarı
+
+reporting:
+  live_interval_s: 3        # canlı konumun siteye gönderilme aralığı
+  counts_interval_s: 300    # bölge sayımlarının geçmişe yazılma aralığı (5 dk)
+
+supabase:
+  # false iken her şey output/events.jsonl dosyasına yazılır (deneme için).
+  enabled: false
+  url: https://wuugnytpkhmrazyrdrkb.supabase.co
+  key: sb_publishable_8paErPGpe2zZ1N1wFOiOeg_aNLfom0o   # sitedeki açık (publishable) anahtar
+  # Sitede giriş yaptığınız hesap. Şifreyi buraya yazmak istemezseniz SHEPHERD_EMAIL ve
+  # SHEPHERD_PASSWORD ortam değişkenlerini kullanın.
+  email: ""
+  password: ""
+  queue_file: output/outbox.sqlite3   # internet yokken kayıtların bekletildiği yer

@@ -1,0 +1,11 @@
+# Çiftliğe özel ve gizli dosyalar
+config.yaml
+zones.yaml
+snapshots/
+output/
+*.pt
+*.sqlite3
+*.jsonl
+__pycache__/
+.venv/
+venv/
